@@ -2,7 +2,7 @@ import os, sys
 sys.path.insert(0, os.path.abspath('..'))
 from whakaari import TremorData, ForecastModel, datetimeify
 from datetime import timedelta, datetime
-#test to see whether this github shit works
+
 # tsfresh and sklearn dump a lot of warnings - these are switched off below, but should be
 # switched back on when debugging
 import logging
