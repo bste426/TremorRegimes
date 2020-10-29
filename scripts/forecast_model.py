@@ -1,8 +1,7 @@
 import os, sys
-from functools import partial
-
 sys.path.insert(0, os.path.abspath('..'))
 from whakaari import *
+
 # tsfresh and sklearn dump a lot of warnings - these are switched off below, but should be
 # switched back on when debugging
 import logging
@@ -74,26 +73,22 @@ def get_gdata_day(t0,station,i):
         site = client.get_stations(starttime=t0, endtime=t1, station=station, level="response", channel="HHZ")
     except FDSNNoDataException:
         pass
-    '''
-    try:
-        WIZ = client.get_waveforms('NZ','WIZ', "10", "HHZ", t0+i*daysec, t0 + (i+1)*daysec)
 
-        # if less than 1 day of data, try different client --- in "X*100" change X to data windows (in seconds)
-        if len(WIZ.traces[0].data) < 60*100:
+    try:
+        WIZ = client.get_waveforms('NZ',station, "10", "HHZ", t0, t1)
+        
+        # if less than 1 day of data, try different client
+        if len(WIZ.traces[0].data) < 600*100:
             raise FDSNNoDataException('')
-    except ObsPyMSEEDFilesizeTooSmallError:
-        return
-    except FDSNNoDataException:
+    except (ObsPyMSEEDFilesizeTooSmallError,FDSNNoDataException) as e:
         try:
-            WIZ = client_nrt.get_waveforms('NZ','WIZ', "10", "HHZ", t0+i*daysec, t0 + (i+1)*daysec)
+            client_nrt = FDSNClient('https://service-nrt.geonet.org.nz')
+            WIZ = client_nrt.get_waveforms('NZ',station, "10", "HHZ", t0, t1)
         except FDSNNoDataException:
+            save_dataframe(None, fl)
             return
-    '''
-    # process frequency bands
-    from obspy import read, Stream
-    t0s = t0 + i * daysec
-    t0f = str(t0s)
-    WIZ = read('/Volumes/Blau/Whakaari_all/' + t0f[0:23] + '.mseed')
+
+    # process data
     WIZ.remove_sensitivity(inventory=site)
     WIZ.traces[0].decimate(5)       # downsample data otherwise its huge
     ti = WIZ.traces[0].meta['starttime']
@@ -112,8 +107,8 @@ def pull_geonet_data(clean=False, station='WIZ', ncpus=1):
     if clean: _ = [os.remove(fl) for fl in glob('_tmp_{:s}/*.pkl'.format(station))]
 
     # default data range if not given 
-    ti = datetime(2011,1,1,0,0,0)    # first reliable date for WIZ
-    tf = datetime(2011,1,3,0,0,0)
+    ti = datetime(2008,5,22,0,0,0)    # first reliable date for WIZ
+    tf = datetime.today()
     ndays = (tf-ti).days+1
 
     # parallel data collection - creates temporary files in ../../_tmp_*station*
@@ -148,22 +143,24 @@ def compile_rsam(interval, fband, src, recompile=False, ncpus=1):
 
     # parallel data collection - creates temporary files in ../../_tmp_*station*
     fls = glob('{:s}/*.pkl'.format(src))
-    n = len(fls)                               # counts, how many days-data are in folder
+    n = len(fls)
     f = partial(get_rsam, interval, fband)     # hard code initial time and station arguments
     p = Pool(ncpus)
     outs = [None]*n
     for i, out in enumerate(p.imap(f, fls)):
         cf = (i+1)/n
-        print(f'processing rsam: [{"#"*round(50*cf)+"-"*round(50*(1-cf))}] {100.*cf:.2f}%\r', end='')
+        print(f'processing rsam: [{"#"*round(50*cf)+"-"*round(50*(1-cf))}] {100.*cf:.2f}%\r', end='') 
         outs[i] = out
     outs = [out for out in outs if out is not None]
+
     p.close()
     p.join()
 
     out = pd.concat(outs)
     out.sort_index(inplace=True)
     out = out.loc[~out.index.duplicated(keep='last')]                       # remove duplicates
-    out = out.resample('{:d}S'.format(interval)).interpolate('linear')      # fills in gaps with linear interpolation
+    out = out.resample('{:d}T'.format(interval)).interpolate('linear')      # fills in gaps with linear interpolation
+    
     save_dataframe(out, fl, index=True)
 
 def get_rsam(interval, fband, fl):
@@ -174,11 +171,12 @@ def get_rsam(interval, fband, fl):
         return None
     data = tr.data
     ti = tr.meta['starttime']
-    print(ti)
-    Ns = int(interval*1)            # seconds in interval
+    Ns = int(interval*60)            # seconds in interval
+
     # round start time to nearest interval
     tiday = UTCDateTime("{:d}-{:02d}-{:02d} 00:00:00".format(ti.year, ti.month, ti.day))
     ti = tiday+int(np.round((ti-tiday)/Ns))*Ns
+    
     N = Ns*20                        # number of samples (at 20 Hz)
     Nm = int(N*np.floor(len(data)/N))
     filtered_data = bandpass(data, *fband, 20)
@@ -196,16 +194,16 @@ def dump_features():
     
     # compute features using 30 day windows with 50% overlap (small FM)
     data_streams = ['rsam_10_2.00-5.00']
-    fm = ForecastModel(volcano='whakaari', window=1., overlap=0.5, look_forward=0, data_streams=data_streams)
+    fm = ForecastModel(volcano='whakaari', window=30., overlap=0.5, look_forward=2., data_streams=data_streams)
     fm.n_jobs = 6
     FM,ys = fm._extract_features(fm.ti_model, fm.tf_model)
     save_dataframe(FM, '../data/{:s}/{:s}_FM.csv'.format(fm.volcano, data_streams[0]))
     return
 
 if __name__ == "__main__":
-    pull_geonet_data(ncpus=7)
-    #compile_rsam(10, [2,5], '../../_tmp_WIZ', ncpus=7, recompile=True)
-    #data_test()
-    #dump_features()
+    # pull_geonet_data(ncpus=7)
+    # compile_rsam(10, [2,5], '../../_tmp_WIZ', ncpus=7, recompile=True)
+    # data_test()
+    # dump_features()
     pass
     
