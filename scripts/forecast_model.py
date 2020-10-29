@@ -88,10 +88,8 @@ def get_gdata_day(t0,station,i):
             WIZ = client_nrt.get_waveforms('NZ','WIZ', "10", "HHZ", t0+i*daysec, t0 + (i+1)*daysec)
         except FDSNNoDataException:
             return
-
-    # process frequency bands
-    WIZ.remove_sensitivity(inventory=site)
     '''
+    # process frequency bands
     from obspy import read, Stream
     t0s = t0 + i * daysec
     t0f = str(t0s)
