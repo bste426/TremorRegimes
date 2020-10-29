@@ -156,6 +156,7 @@ class TremorData(object):
             'diff' (derivative), 'log' (base 10 logarithm) and 'stft' (short-time
             Fourier transform averaged across 40-45 periods).
         """
+        return
         for col in self.df.columns:
             if col is 'time': continue
             # inverse
