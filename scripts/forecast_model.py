@@ -38,7 +38,7 @@ def data_test():
     # MUST only have been computed using data prior to 2015/08/20
 
     # test loading of the data
-    td = TremorData(volcano='whakaari', frequency='10T')     # loading 10 minute interval tremor data
+    td = TremorData(volcano='whakaari', frequency='10S')     # loading 10 minute interval tremor data
     
     # test plotting of the data
     # for each eruption, plot data 30 days prior
@@ -61,7 +61,7 @@ def get_gdata_day(t0,station,i):
     """
     daysec = 24*3600
     t0 = UTCDateTime(t0) + i*daysec
-    t1 = t0 + daysec
+    t1 = t0
     fl = "../../_tmp_{:s}/{:d}-{:02d}-{:02d}.pkl".format(station, t0.year, t0.month, t0.day)
     if os.path.isfile(fl):
         return
@@ -91,9 +91,8 @@ def get_gdata_day(t0,station,i):
     '''
     # process frequency bands
     from obspy import read, Stream
-    t0s = t0 + i * daysec
-    t0f = str(t0s)
-    WIZ = read('/Volumes/Blau/Whakaari_all/' + t0f[0:23] + '.mseed')
+    t1c = str(t1)
+    WIZ = read('/Users/bst/Documents/All/PhD/Data/SeismicData/Whakaari_2019/' + t1c[0:23] + '.mseed')
     WIZ.remove_sensitivity(inventory=site)
     WIZ.traces[0].decimate(5)       # downsample data otherwise its huge
     ti = WIZ.traces[0].meta['starttime']
@@ -112,8 +111,8 @@ def pull_geonet_data(clean=False, station='WIZ', ncpus=1):
     if clean: _ = [os.remove(fl) for fl in glob('_tmp_{:s}/*.pkl'.format(station))]
 
     # default data range if not given 
-    ti = datetime(2011,1,1,0,0,0)    # first reliable date for WIZ
-    tf = datetime(2011,1,3,0,0,0)
+    ti = datetime(2019,12,7,0,0,0)    # first reliable date for WIZ
+    tf = datetime(2019,12,10,0,0,0)
     ndays = (tf-ti).days+1
 
     # parallel data collection - creates temporary files in ../../_tmp_*station*
@@ -126,7 +125,7 @@ def pull_geonet_data(clean=False, station='WIZ', ncpus=1):
     p.close()
     p.join()
 
-def compile_rsam(interval, fband, src, recompile=False, ncpus=1):
+def compile_rsam(interval, src, recompile=False, ncpus=1):
     ''' process the downloaded seismic data for rsam at particular interval/freq bands
 
         Parameters:
@@ -141,7 +140,7 @@ def compile_rsam(interval, fband, src, recompile=False, ncpus=1):
             Flag to delete file and start again.
     '''
     # note, the naming convention in the file below adheres to the description in data_test()
-    fl = '../data/whakaari/rsam_{:d}_{:3.2f}-{:3.2f}_data.csv'.format(interval, *fband)
+    fl = '../data/whakaari/rsam_test_data.csv'
 
     if os.path.isfile(fl) and not recompile:
         return
@@ -149,22 +148,27 @@ def compile_rsam(interval, fband, src, recompile=False, ncpus=1):
     # parallel data collection - creates temporary files in ../../_tmp_*station*
     fls = glob('{:s}/*.pkl'.format(src))
     n = len(fls)                               # counts, how many days-data are in folder
-    f = partial(get_rsam, interval, fband)     # hard code initial time and station arguments
-    p = Pool(ncpus)
-    outs = [None]*n
-    for i, out in enumerate(p.imap(f, fls)):
-        cf = (i+1)/n
-        print(f'processing rsam: [{"#"*round(50*cf)+"-"*round(50*(1-cf))}] {100.*cf:.2f}%\r', end='')
-        outs[i] = out
-    outs = [out for out in outs if out is not None]
-    p.close()
-    p.join()
 
-    out = pd.concat(outs)
-    out.sort_index(inplace=True)
-    out = out.loc[~out.index.duplicated(keep='last')]                       # remove duplicates
-    out = out.resample('{:d}S'.format(interval)).interpolate('linear')      # fills in gaps with linear interpolation
-    save_dataframe(out, fl, index=True)
+    Nf    = len(fband)
+    all_out = pd.DataFrame([])
+    for x in range(Nf):
+        f = partial(get_rsam, interval, fband[x])     # hard code initial time and station arguments
+        p = Pool(ncpus)
+        outs = [None]*n
+        for i, out in enumerate(p.imap(f, fls)):
+            cf = (i+1)/n
+            print(f'processing rsam: [{"#"*round(50*cf)+"-"*round(50*(1-cf))}] {100.*cf:.2f}%\r', end='')
+            outs[i] = out
+        outs = [out for out in outs if out is not None]
+        p.close()
+        p.join()
+
+        out = pd.concat(outs)
+        out.sort_index(inplace=True)
+        out = out.loc[~out.index.duplicated(keep='last')]                       # remove duplicates
+        out = out.resample('{:d}S'.format(interval)).interpolate('linear')      # fills in gaps with linear interpolation
+        all_out.insert(x,names[x],out, True)
+    save_dataframe(all_out, fl, index=True)
 
 def get_rsam(interval, fband, fl):
 
@@ -174,38 +178,41 @@ def get_rsam(interval, fband, fl):
         return None
     data = tr.data
     ti = tr.meta['starttime']
-    print(ti)
     Ns = int(interval*1)            # seconds in interval
     # round start time to nearest interval
     tiday = UTCDateTime("{:d}-{:02d}-{:02d} 00:00:00".format(ti.year, ti.month, ti.day))
     ti = tiday+int(np.round((ti-tiday)/Ns))*Ns
     N = Ns*20                        # number of samples (at 20 Hz)
     Nm = int(N*np.floor(len(data)/N))
-    filtered_data = bandpass(data, *fband, 20)
+
+    filtered_data = bandpass(data, *fband, 100)
     filtered_data = abs(filtered_data[:Nm])
     filtered_data = filtered_data.reshape(-1,N).mean(axis=-1)*1.e9
 
     # write out temporary file
     time = [(ti+j*Ns).datetime for j in range(filtered_data.shape[0])]
     df = pd.Series(filtered_data, index=pd.Series(time))
+
     return df
 
 def dump_features():
     ''' output feature matrix for data
     '''
-    
-    # compute features using 30 day windows with 50% overlap (small FM)
-    data_streams = ['rsam_10_2.00-5.00']
-    fm = ForecastModel(volcano='whakaari', window=1., overlap=0.5, look_forward=0, data_streams=data_streams)
+
+    #if sampling frequency changes, adapt line 90 in __init__.py // window/forward lengths in seconds
+    data_streams = ['rsam_10_2.00-5.00']            # for later: data_streams = names
+    fm = ForecastModel(volcano='whakaari', window=60, overlap=0, look_forward=60, data_streams=data_streams)
     fm.n_jobs = 6
     FM,ys = fm._extract_features(fm.ti_model, fm.tf_model)
     save_dataframe(FM, '../data/{:s}/{:s}_FM.csv'.format(fm.volcano, data_streams[0]))
     return
 
 if __name__ == "__main__":
-    pull_geonet_data(ncpus=7)
-    #compile_rsam(10, [2,5], '../../_tmp_WIZ', ncpus=7, recompile=True)
-    #data_test()
-    #dump_features()
+    fband = [[0.1, 1],[2,3]]    # add, change or remove frequency bands here (max. fq: 50Hz)
+    names = ['F1','F2']         # add columns or remove some depending on number of input fbands
+    #pull_geonet_data(ncpus=7)
+    #compile_rsam(10, '../../_tmp_WIZ', ncpus=7, recompile=True)
+    #data_test()                # only works for 1 feature band (for now)
+    dump_features()             # only works for 1 feature band (for now)
     pass
     
