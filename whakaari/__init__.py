@@ -87,11 +87,11 @@ class TremorData(object):
         plot
             Plot tremor data.
     """
-    def __init__(self, volcano, frequency='1D'):
+    def __init__(self, volcano, data_streams, frequency='10T'):
         self.volcano = volcano
         self.frequency = frequency
         self.dir = os.sep.join(getfile(currentframe()).split(os.sep)[:-2]+['data',self.volcano])
-        self._assess()
+        self._assess(data_streams)
     def __repr__(self):
         if self.exists:
             tm = [self.ti.year, self.ti.month, self.ti.day, self.ti.hour, self.ti.minute]
@@ -99,7 +99,7 @@ class TremorData(object):
             return 'TremorData:{:d}/{:02d}/{:02d} {:02d}:{:02d} to {:d}/{:02d}/{:02d} {:02d}:{:02d}'.format(*tm)
         else:
             return 'no data'
-    def _assess(self):
+    def _assess(self, data_streams):
         """ Load existing file and check date range of data.
         """
         # error checking
@@ -116,10 +116,12 @@ class TremorData(object):
         with open('{:s}/eruptive_periods.txt'.format(self.dir),'r') as fp:
             self.tes = [datetimeify(ln.rstrip()) for ln in fp.readlines()]
         # check if data file exists
-        self._load_data()
-    def _load_data(self):
-        
-        fl = '{:s}/*_data.csv'.format(self.dir)
+        self._load_data(data_streams)
+    def _load_data(self,data_streams):
+        data_streams = str(data_streams)
+        #fl = '/Users/bst/Documents/All/PhD/Data/Codes/Dempsey_new/data/whakaari/rsam_600_0.01-0.50_data.csv'
+        test = '{:s}/*'+data_streams[2:-2]+'_data.csv'
+        fl = test.format(self.dir)
         data_fls = glob(fl)
 
         # read data files
@@ -127,16 +129,14 @@ class TremorData(object):
         dtypes = []
         for fl in data_fls:
             dtypes.append(fl.split(os.sep)[-1].split('_data.csv')[0])
-            _, d = np.genfromtxt(fl, skip_header=1, delimiter=',').T
-            with open(fl,'r') as fp: t = [ln.split(',')[0] for ln in fp.readlines()[1:]]
+            _, d = np.genfromtxt(fl, skip_header=0, delimiter=',').T
+            with open(fl,'r') as fp: t = [ln.split(',')[0] for ln in fp.readlines()[0:]]
             fmt = detect_timeformat(t[0])
             t = [datetimeify(ti, fmt) for ti in t]
             ds.append(pd.Series(d, t))
-        
         # find latest tmin, earliest tmax
         self.ti = np.max([d.index[0] for d in ds])
         self.tf = np.min([d.index[-1] for d in ds])
-
         # truncate records to time range and resample at regular interval
         ds2 = []
         for d in ds:
@@ -408,7 +408,7 @@ class ForecastModel(object):
         self.overlap = overlap
         self.look_forward = look_forward
         self.data_streams = data_streams
-        self.data = TremorData(self.volcano)
+        self.data = TremorData(self.volcano,data_streams)
         if any(['_' in ds for ds in data_streams]):
             self.data._compute_transforms()
         if any([d not in self.data.df.columns for d in self.data_streams]):
@@ -423,22 +423,22 @@ class ForecastModel(object):
         if self.ti_model < self.data.ti:
             t0,t1 = [self.ti_model.strftime('%Y-%m-%d %H:%M'), self.data.ti.strftime('%Y-%m-%d %H:%M')]
             raise ValueError("Model start date '{:s}' predates data range '{:s}'".format(t0,t1))
-        self.dtw = timedelta(days=self.window)
-        self.dtf = timedelta(days=self.look_forward)
+        self.dtw = timedelta(seconds=self.window)
+        self.dtf = timedelta(seconds=self.look_forward)
         self.dt = (self.data.df.index[1] - self.data.df.index[0])
-        dt = self.dt.total_seconds()/(3600*24)
+        dt = self.dt.total_seconds()
         self.dto = (1.-self.overlap)*self.dtw
-        self.iw = int(self.window/dt)         
-        self.io = int(self.overlap*self.iw)      
+        self.iw = int(self.window/dt)
+        self.io = int(self.overlap*self.iw)
         if self.io == self.iw: self.io -= 1
 
         self.window = self.iw*dt
-        self.dtw = timedelta(days=self.window)
+        self.dtw = timedelta(seconds=self.window)
         if self.ti_model - self.dtw < self.data.ti:
             self.ti_model = self.data.ti+self.dtw
         self.overlap = self.io*1./self.iw
         self.dto = (1.-self.overlap)*self.dtw
-        
+
         self.drop_features = []
         self.exclude_dates = []
         self.use_only_features = []
@@ -551,7 +551,7 @@ class ForecastModel(object):
         else:
             # drop features if relevant
             _ = [cfp.pop(df) for df in self.drop_features if df in list(cfp.keys())]
-
+        '''
         # check if feature matrix already exists and what it contains
         if os.path.isfile(self.featfile):
             # t = pd.to_datetime(pd.read_csv(self.featfile, index_col=0, parse_dates=['time'], usecols=['time'], infer_datetime_format=True).index.values)
@@ -617,14 +617,15 @@ class ForecastModel(object):
                 # fm = pd.read_csv(self.featfile, index_col=0, parse_dates=['time'], infer_datetime_format=True, header=0, skiprows=range(1,i0+1), nrows=i1-i0)
                 fm = load_dataframe(self.featfile, index_col=0, parse_dates=['time'], infer_datetime_format=True, header=0, skiprows=range(1,i0+1), nrows=i1-i0)
         else:
-            # create feature matrix from scratch   
-            df, wd = self._construct_windows(Nw, ti)
-            fm = extract_features(df, column_id='id', n_jobs=self.n_jobs, default_fc_parameters=cfp, impute_function=impute)
-            fm.index = pd.Series(wd)
-            fm.index.name = 'time'
-            # fm.to_csv(self.featfile, index=True, index_label='time')
-            save_dataframe(fm, self.featfile, index=True, index_label='time')
-            
+            # create feature matrix from scratch  
+            '''
+        df, wd = self._construct_windows(Nw, ti)
+        fm = extract_features(df, column_id='id', n_jobs=self.n_jobs, default_fc_parameters=cfp, impute_function=impute)
+        fm.index = pd.Series(wd)
+        fm.index.name = 'time'
+        # fm.to_csv(self.featfile, index=True, index_label='time')
+        save_dataframe(fm, self.featfile, index=True, index_label='time')
+        
         ys = pd.DataFrame(self._get_label(fm.index.values), columns=['label'], index=fm.index)
         return fm, ys
     def _get_label(self, ts):
@@ -887,7 +888,7 @@ class ForecastModel(object):
 
         return false_alert, missed, true_alert, true_negative, dur, mcc
     # public methods
-    def get_features(self, ti=None, tf=None, n_jobs=1, drop_features=[], compute_only_features=[]):
+    def get_features(self, ti=None, tf=None, n_jobs=6, drop_features=[], compute_only_features=[]):
         """ Return feature matrix and label vector for a given period.
 
             Parameters:
