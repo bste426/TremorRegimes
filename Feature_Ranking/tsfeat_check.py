@@ -19,7 +19,7 @@ VCL = cl_vector.iloc[:,0]
 filename = 'whakaari_043200.00wndw_rsam_10_5.00-10.00_features.csv'
 df = pd.read_csv(filename,header=None, skiprows=1)
 
-startdate = '2008-05-27'
+startdate = '2008-05-27' #vector and matrix need to have the same length or cover the same time period
 enddate = '2020-11-18'
 
 time_np = df[0]
@@ -68,6 +68,6 @@ for t in range(np.shape(df)[1]-1):
 
 RMAT = sorted(RMAT, reverse = True)
 RMAT = pd.DataFrame(RMAT, columns=rowname, index=names)
-RMAT = RMAT[1:20]
+RMAT = RMAT[0:19]
 RMAT.to_csv("RMAT.csv")
 
