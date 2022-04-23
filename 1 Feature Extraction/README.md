@@ -1,8 +1,11 @@
 # Feature Extraction
 
-featbatch.py has 3 functions: (1) downloading miniseed earthquake data, (2) converting miniseed files to continuous time stream (csv), and (3) generating feature matrices to use as SOM input.
+featbatch.py has 3 functions: 
+(1) It downloads and processes miniseed earthquake data.
+(2) It concatenates individual miniseed files to a continuous time stream.
+(3) It generates feature matrices, which can be used as input for SOM classifications.
 
-_init_.py is an accompaying file support featbatch.py. Both codes need to be executed within the correct conda envrionment (environment.yml).
+_init_.py is an accompaying file supporting featbatch.py. Both codes need to be executed within the correct conda envrionment (environment.yml).
 
 ## Disclaimers
 General disclaimers are valid for all folders in this repository.
