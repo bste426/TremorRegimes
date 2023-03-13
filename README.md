@@ -22,10 +22,9 @@ Ensure you have Anaconda Python 3.8 installed.
 git clone https://github.com/bste426/TremorRegimes
 ```
 
-2. CD into each sub-section and create the corresponding conda environment
+2. Open new Terminal window within each sub-section and create the corresponding conda environment
 
 ```bash
-cd *name of subsection* (e.g. 1_Feature_Extraction)
 
 conda env create -f environment.yml
 
