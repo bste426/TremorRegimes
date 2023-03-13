@@ -15,20 +15,6 @@ warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=FitFailedWarning)
 
-def get_data_from_stream(st, site):
-    if len(st.traces) == 0:
-        raise
-    elif len(st.traces) > 1:
-        try:
-            st.merge(fill_value='interpolate').traces[0]
-        except Exception:
-            st.interpolate(100).merge(fill_value='interpolate').traces[0]
-
-    st.remove_sensitivity(inventory=site)
-    # st.detrend('linear')
-    # return st.traces[0].data
-    return st
-
 def get_gdata_day(t0,i):
     """ Download WIZ data for given 24 hour period, writing data to temporary file.
 
@@ -40,11 +26,10 @@ def get_gdata_day(t0,i):
             Name of station to grab data from.
         t0 : datetime.datetime
             Initial date of data download period.
-        
+
     """
     if not os.path.isdir('../SeismicData'):
         os.makedirs('../SeismicData', exist_ok=True)
-
     daysec = 24*3600
     t0 = UTCDateTime(t0) + i*daysec
     t1 = t0
@@ -65,7 +50,7 @@ def get_gdata_day(t0,i):
     try:
         WIZ = client.get_waveforms('NZ','WIZ', "10", "HHZ", t0+i*daysec, t0+(i+1)*daysec)
 
-        # if less than 1 day of data, try different client --- in "X*100" change X to data windows (in seconds)
+        # if less than 1 day of data, try different client
         if len(WIZ.traces[0].data) < 60*100:
             raise FDSNNoDataException('')
     except ObsPyMSEEDFilesizeTooSmallError:
@@ -76,14 +61,13 @@ def get_gdata_day(t0,i):
         except FDSNNoDataException:
             return
 
-    WIZ.remove_sensitivity(inventory=site)  # deactivate?
-    WIZ.traces[0].decimate(2)       # downsample data otherwise its huge
+    WIZ.remove_sensitivity(inventory=site)  # removes station response
+    WIZ.traces[0].decimate(2)       # downsample data otherwise its huge (adapt depending on max frequency to be analysed)
     save_dataframe(WIZ.traces[0], fl)
 
 def pull_geonet_data(ncpus=6):
     ''' pulls down all the geonet data for whakaari so you can reprocess different length RSAMs if you like
 
-        this one takes a few hours to run from scratch
     '''
 
     # define range for downloading data
@@ -157,6 +141,7 @@ def get_rsam(interval, fband, fl):
 
     if tr is None:
         return None
+    
     try:
         data = tr.traces[0]
     except:
@@ -209,6 +194,7 @@ if __name__ == "__main__":
 
 # STEP 1: GET DATA FROM FDSN SERVER / OFFLINE
     pull_geonet_data(ncpus=6)
+    print('Time period for downloading data can be adjusted in lines 74/75.')
 
 # STEP 2: CREATE RAW MATRICES WITH DIFFERENT FREQUENCIES AND INTERVALS
     ### Choose RSAM interval (in seconds)
@@ -219,8 +205,10 @@ if __name__ == "__main__":
         for x in range((len(fband))):
             print(fband[x])
             compile_rsam(interval[i], fband[x], '../SeismicData', ncpus=6)
+    print('RSAM rate and frequency band can be adjusted in lines 201/203.')
     
 # STEP 3: CALCULATE FEATURES FOR EACH MATRIX
     dump_features()
+    print('Time window length can be adjusted in lines 171.')
 
 pass
