@@ -7,6 +7,7 @@ More details and updates soon!
 
 Publication: 
 Steinke, B., Jolly, A. D., Carniel, R., Dempsey, D. E., & Cronin, S. J. Identification of seismo‐volcanic regimes at Whakaari/White Island (New Zealand) via systematic tuning of an unsupervised classifier. Journal of Geophysical Research: Solid Earth, e2022JB026221.
+
 Available at: 
 https://agupubs.onlinelibrary.wiley.com/doi/abs/10.1029/2022JB026221
 
@@ -21,10 +22,10 @@ Ensure you have Anaconda Python 3.8 installed.
 git clone https://github.com/bste426/TremorRegimes
 ```
 
-2. CD into each repo and create the corresponding conda environment
+2. CD into each sub-section and create the corresponding conda environment
 
 ```bash
-cd whakaari
+cd *name of subsection (e.g. 1_Feature_Extraction)*
 
 conda env create -f environment.yml
 
