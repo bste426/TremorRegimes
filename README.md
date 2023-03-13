@@ -5,7 +5,10 @@ Each folder and the codes within were assigned an individual copyright licence. 
 
 More details and updates soon! 
 
-Publication: Steinke, B., Jolly, A.D., Carniel, R., Dempsey, D.D. and Cronin, S.J. (submitted). Identification of seismo-volcanic regimes at Whakaari (New Zealand) via systematic tuning of an unsupervised classifier. 
+Publication: 
+Steinke, B., Jolly, A. D., Carniel, R., Dempsey, D. E., & Cronin, S. J. Identification of seismo‐volcanic regimes at Whakaari/White Island (New Zealand) via systematic tuning of an unsupervised classifier. Journal of Geophysical Research: Solid Earth, e2022JB026221.
+Available at: 
+https://agupubs.onlinelibrary.wiley.com/doi/abs/10.1029/2022JB026221
 
 For any enquiries, please contact *bastian.steinke@auckland.ac.nz*
 
