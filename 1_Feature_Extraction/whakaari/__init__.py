@@ -90,7 +90,7 @@ class TremorData(object):
     def __init__(self, volcano, data_streams, frequency='10T'):
         self.volcano = volcano
         self.frequency = frequency
-        self.dir = os.sep.join(getfile(currentframe()).split(os.sep)[:-2]+['data',self.volcano])
+        self.dir = os.sep.join(getfile(currentframe()).split(os.sep)[:-2]+['RSAM'])
         self._assess(data_streams)
     def __repr__(self):
         if self.exists:
