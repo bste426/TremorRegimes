@@ -13,4 +13,3 @@ scripts/*_alert
 scripts/alert.csv
 scripts/*.err
 .DS_Store
-.DS_Store
