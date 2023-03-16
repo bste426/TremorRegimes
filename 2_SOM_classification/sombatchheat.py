@@ -30,6 +30,10 @@ from itertools import combinations
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import silhouette_score, davies_bouldin_score, v_measure_score
 
+# to avoid warnings:
+register_matplotlib_converters()  
+plt.set_loglevel('WARNING')
+
 '''
 This code creates a Self-Organising Map (SOM) based on features extracted in '1_Feature_Extraction'. 
 SOM will reconstruct the input data structure in reduced dimensionality, before k-means assigns time windows to clusters.
@@ -54,17 +58,20 @@ files = glob.glob(PATH + '*.csv')
 
 # Are training and test data sets the same? (This is to reproduce the structure of the training data itself.)
 'This has to be on True now, alternative will be available very soon (March 2023) once the code is updated.'
-TESTisTRAIN = True 
+TESTisTRAIN = False 
 
 if TESTisTRAIN is False:
-    # Specify time period of test data (data you want to be looking at in the end):
-    startdate_test = '2011-06-01'  # min.: 2008-06-01 (5-day matrix)
-    enddate_test = '2014-06-01'  # max.: 2020-12-31 (last day in data for original analysis of Whakaari data - see paper)
+    '''This is either for the case that you have a trained SOM that you want to use to test an independent dataset (e.g. from a different volcano), or
+    for the case that the matrices provided in PATH are split up in different train and test sets. Initially, set trainedmap = False.
+    '''
 
+    # Specify time period of test data (data you want to be looking at in the end):
+    startdate_test = '2012-08-02'
+    enddate_test = '2012-08-04'
     # Do you already have a trained map?
     trainedmap = True
     # If so: Where can the trained map be found?
-    trained_PATH = '/trained_maps/whakaari_43200.00wndw_rsam_10_2.00-5.00_data_features_5cl_5x5_2021-01-01_2021-11-21.pkl'
+    trained_PATH = 'trained_maps/whakaari_3600.00wndw_rsam_10_1.00-15.00_data_features_5cl_5x5_2012-08-01_2012-08-05.pkl'
 
 # Plot SOM visualisations?
 plot_SOM = False
@@ -79,34 +86,206 @@ monthinterval = 1   #interval of x-ticks in months (adapt for visual reasons dep
 # Shall the maps be interactive for close-ups?
 interactive = False
 # Would you like to compute SOM errors? (default: False.This feature is only really useful when using a large set of consistent feature matrices, i.e. complete combinations of frequency bands and time window lengths)
-heatmap_on = True
+heatmap_on = False
 
 
 
 #######################
 ### HYPERPARAMETERS ###
 #######################
+
 '''Remember that two key parameters, data frequency band, RSAM interval and time window length, have been specified during feature extraction.
 '''
 
 #mapsize (number of neurons, for multiple SOM sizes):
-mx = [5,10,15]#,10,16,20,30]   #  x-dimension of SOM
-my = [5,10,15]#,40,25,20,30]   #  y-dimension of SOM
+mx = [5,10]#,15]#,10,16,20,30]   #  x-dimension of SOM
+my = [5,10]#,15]#,40,25,20,30]   #  y-dimension of SOM
 
 #map_lattice:
-map_lattice = ['rect','rect','rect']#,'rect','rect','rect','rect'] # 'rect'(angular) or 'hexa'(gonal)
+map_lattice = ['rect','rect']#,'rect']#,'rect','rect','rect','rect'] # 'rect'(angular) or 'hexa'(gonal)
 
 #number of clusters:
 n_clusters = 5 # Initially, you can perform statistical tests to get an estimate of a suitable number of clusters (see below).
 
 # Do you want to calculate a suggested number of cluster?
-CL_Determination = True
+CL_Determination = False #This is implemented for batch processing when TESTisTrain = 'True'. Otherwise, use individual matrices with pre-defined n_clusters.
 cl_mode = []
 # Create output from statistical tests?
 plot_curves = True
 # Use linear or polynomial detrending of curves to find maxima/minima performance scores?
 Polynomial_Detrend = True
 degree = 4
+
+def load_data(file, startdate, enddate):
+    df = pd.read_csv(file, header=None, low_memory=False)
+    time_np = df[0]
+    dates = list(time_np)
+    newdates = [x[:-9] for x in dates]
+    for row in newdates:
+        if startdate == row:
+            to_start = np.array(newdates.index(startdate))
+            break
+    for row in newdates:
+        if enddate == row:
+            to_end = np.array(newdates.index(enddate))
+            break
+    to_end = to_end - to_start
+    df = pd.read_csv(file, header=None, skiprows=(int(to_start)), nrows=(int(to_end)),low_memory=False)
+
+    return df, to_start, to_end, time_np
+
+def training_stage(df, n_clusters, mapsize, lattice, plot_SOM, save_trained_map, CL_Determination):
+    # preparation of training data
+    dlen = df.shape[0]
+    df.head()
+    dfselection2=pd.DataFrame(data=df.iloc[0:dlen, 1:df.shape[1]])
+    Traindata = dfselection2.values
+
+    # This builds the SOM using pre-defined hyperparameters and other default parameters. Initialization can be 'random' or 'pca'.
+    som = sompy.SOMFactory.build(Traindata, mapsize, mask=None, mapshape='planar', lattice=lattice, normalization='None', initialization='pca', neighborhood='gaussian', training='batch', name='sompy')  
+    som.train(n_job=6, verbose='info') #verbose='info' medium. verbose='debug' will print more, and verbose=None wont print anything
+
+    # Calculate and save topographic and quantization errors
+    te = som.calculate_topographic_error()
+    qe = np.mean(som._bmu[1])
+    print ("Topographic error = %s; Quantization error = %s" % (te,qe))
+    teqe = (te,qe)
+    Errors.append(teqe)
+
+    # Visualise internal structure of SOM
+    if plot_SOM is True:
+        v = sompy.mapview.View2DPacked(50, 50, 'test', text_size=8)
+        fig = v.show(som, what='codebook', which_dim='all', cmap='jet', col_sz=6)  # which_dim='all' default
+        plt.savefig('mapview.png', dpi=200)
+
+        v = sompy.mapview.View2DPacked(2, 2, 'test', text_size=8)
+        v.show(som, what='cluster')
+
+        h = sompy.hitmap.HitMapView(10, 10, 'hitmap', text_size=8, show_text=True)
+        h.show(som)
+
+        vhts = sompy.visualization.bmuhits.BmuHitsView(40,40,"Hits Map",text_size=12)
+        vhts.show(som, anotate=True, onlyzeros=False, labelsize=12, cmap="Greys", logaritmic=False)
+
+        plts = sompy.visualization.dotmap.DotMapView(40, 40, "Dot Map", text_size=12)
+        plts.show(som) #lentissimo
+
+        u = sompy.umatrix.UMatrixView(50, 50, 'umatrix', show_axis=True, text_size=8, show_text=True)
+        UMAT = u.build_u_matrix(som, distance=1, row_normalized=False)
+        UMAT = u.show(som, distance2=1, row_normalized=False, show_data=True, contooor=True, blob=False)
+
+    # Use built-in function of SOMPY to perform clustering (k-means)
+    cl = som.cluster(n_clusters=n_clusters)
+
+    # save SOM
+    if save_trained_map is True:
+        if not os.path.isdir('trained_maps'):
+            os.makedirs('trained_maps')
+        joblib.dump(som, 'trained_maps/' + FILE + EXTNAME)
+
+    # after creating the SOM, perform tests with hypothetical numbers of clusters to gain optimum
+    if CL_Determination is True:
+        cl_det(som,cl,mapname,plot_curves,degree)
+
+    return Traindata, som
+
+def test_stage(Traindata, n_clusters, time_np, to_start, to_end, FILE, EXTNAME):
+    output = som.project_data(Traindata)
+    cl = som.cluster(n_clusters=n_clusters)
+    cloutput = cl[output] #for each data, cloutput contains its assigned cluster
+    cloutputDF = pd.DataFrame(cloutput)
+    if not os.path.isdir('cluster_vectors'):
+        os.makedirs('cluster_vectors')
+    cloutputDF.to_csv('cluster_vectors/clusters_'+ FILE + EXTNAME[:-4] +'.csv', index=False, header=False)
+
+    to_start, to_end = int(to_start), int(to_end)
+    time_np = time_np[to_start:(to_start + to_end)]
+
+    if not os.path.isdir('tested_maps'):
+        os.makedirs('tested_maps')
+
+    with open('tested_maps/' + FILE + EXTNAME, 'wb') as f:
+        pickle.dump([time_np, cloutput], f)
+
+def plot_data(FILE, EXTNAME, time_np, monthinterval, volcano, station, fband, n_clusters, map_x, map_y):
+    
+    # preparing time vector (conversion to timestamps)
+    with open('tested_maps/' + FILE + EXTNAME,'rb') as f:
+        time_np, cloutput = pickle.load(f)
+    time_np = np.asarray(time_np)
+    time_np2 = []
+    for x in range(len(time_np)):
+        try:
+            time_np2.append(datetime.strptime(str(time_np[x]), '%Y-%m-%d %H:%M:%S'))
+        except:
+            time_np2.append(datetime.strptime(str(time_np[x]), '%Y-%m-%d'))
+    time_np = np.array(time_np2)
+
+
+    # plot initialization
+    fig, axarr = plt.subplots(1, sharex=True, sharey=False)
+    if interactive is False:
+        fig.set_size_inches(16, 9)
+    axarr.set_yticklabels([])
+    axarr.axis('off')
+    ax = fig.add_subplot(1, 1, 1, sharex=fig.axes[0])
+    colormap = np.array(['r', 'purple', 'b', 'cyan', 'lime'])
+    tminimo = 0
+    tmassimo = time_np.shape[0]
+    colours = cloutput[tminimo:tmassimo] % colormap.shape[0]
+    ax.scatter(time_np[tminimo:tmassimo], cloutput[tminimo:tmassimo]+1, c=colormap[colours])
+    ax.set_xlim(min(time_np), max(time_np))
+    ax.set_ylabel('Cluster number', fontsize = 15)
+    ax.grid(linestyle='dotted', which='both')
+    ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+    fig.subplots_adjust(hspace=0.05)
+    plt.setp([a.get_xticklabels() for a in fig.axes[:-1]], visible=False)
+
+    # change interval of ticks on x-axis here depending on length of time-period covered by data
+    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=monthinterval))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+    fig.autofmt_xdate()
+    plt.xticks(fontsize = 15)
+    plt.yticks(fontsize = 15)
+
+    # add events to plot
+    with open('../1_Feature_Extraction/RSAM/eruptive_periods.txt', 'r') as fp:
+        tes = [ln.rstrip() for ln in fp.readlines()]
+    xcoords = tes
+    for xc in xcoords:
+        ax.axvline(x = xc, color='k', linestyle='-', linewidth=2, label='_')
+    
+    with open('../1_Feature_Extraction/RSAM/activity.txt', 'r') as fp:
+        act = [ln.rstrip() for ln in fp.readlines()]
+    cords = act
+    for co in cords:
+        ax.axvline(x = co, color='dimgrey', linestyle='--', linewidth=2, label='_')
+
+    ax.axvline(x='2012-08-04 16:52:00', color='k', linestyle='-', linewidth=2, label='eruption')
+    ax.axvline(x='2012-09-02 00:00:00', color='dimgrey', linestyle='--', linewidth=2, label='ash emission')
+    ax.axvline(x='2012-11-24 00:00:00', color='dimgrey', linestyle=':', linewidth=2, label='observation of lava dome')
+
+
+    # add legend and title
+    ax.legend(bbox_to_anchor=(0.25, 1), fontsize = 15, ncol = 3)
+    TITLE = str(volcano + ', ' + station + '   fband: ' + fband +'   Cluster: ' + str(n_clusters) + '   SOM size: '+str(map_x)+'x'+str(map_y))
+
+    ppl.title(TITLE, loc='left')
+
+    # save plot
+    fig.set_size_inches(16, 6)
+    if not os.path.isdir('__OUTPUT'):
+        os.makedirs('__OUTPUT')
+    path = '__OUTPUT/' + FILE + EXTNAME + '.png'
+    plt.savefig(path, dpi=600)
+
+    if interactive is True:
+        fig.set_size_inches(15,8)
+        ppl.ion()
+        ppl.show()
+        ppl.pause(1000)
+
+    plt.close()
 
 def cl_det(som, cl, mapname, plot_curves, degree):
     '''Performs statistical tests to return a suitable number of clusters to start with.
@@ -484,720 +663,85 @@ def heatmap(Errors, n_clusters, win_len, fbands, mapsize):
                 dpi=300)
     plt.close('all')
 
-if TESTisTRAIN is True:
-
-    for z in range(len(mx)):
-        '''Perform analysis for each given map size/shape'''
-        print('Calculating SOM with dimensions '+str(mx[z])+'x'+str(my[z]))
-
-        mapsize = [mx[z], my[z]]
-        lattice = map_lattice[z]
-
-        fbands = [] # collects frequency band of SOM
-        win_len = []# collects time window length
-        Errors = [] # collects topographic and quantization errors of map (for heatmap)
-
-        for file in files:
-
-            ###########################################################
-            ############## T R A I N I N G   S T A G E ################
-            ###########################################################
-
-            print(file) # provide info on where the analysis is at
-            Graphics = False  # False disables graphics, e.g. for batch
-            logging.getLogger('matplotlib.font_manager').disabled = True
-            plt.interactive(False)
-
-            # Prepare name and path to save SOM
-            FILE = file[len(PATH):-4]  # removes ".csv"
-            EXTNAME = '_{:s}cl_{:s}x{:s}_{:s}_{:s}.pkl'.format(str(n_clusters),str(mx[z]),str(my[z]),startdate,enddate) # save classification result under this name
-            mapname = FILE+EXTNAME[:-4] # full path to save classification result
-
-            # extract frequency band from filename (easier naming convention would make this easier; implemented in future)
-            fband = file[([index for index, character in enumerate(file) if character == '_'][-3]+1):([index for index, character in enumerate(file) if character == '_'][-2])]
-            fbands.append(fband)
-            window = file[([index for index, character in enumerate(file) if character == '_'][2]+1):([index for index, character in enumerate(file) if character == '_'][3]-4)]
-            win_len.append(window)
-
-            # Load dataframe from startdate to enddate
-            df = pd.read_csv(file, header=None, low_memory=False)
-            time_np = df[0]
-            dates = list(time_np)
-            newdates = [x[:-9] for x in dates]
-            for row in newdates:
-                if startdate == row:
-                    to_start = np.array(newdates.index(startdate))
-                    break
-            for row in newdates:
-                if enddate == row:
-                    to_end = np.array(newdates.index(enddate))
-                    break
-            to_end = to_end - to_start
-            df = pd.read_csv(file, header=None, skiprows=(int(to_start)), nrows=(int(to_end)),low_memory=False)
-
-            # preparation of training data
-            dlen = df.shape[0]
-            df.head()
-            dfselection2=pd.DataFrame(data=df.iloc[0:dlen, 1:df.shape[1]])
-            Traindata = dfselection2.values
-
-            # This builds the SOM using pre-defined hyperparameters and other default parameters. Initialization can be 'random' or 'pca'.
-            som = sompy.SOMFactory.build(Traindata, mapsize, mask=None, mapshape='planar', lattice=lattice, normalization='None', initialization='pca', neighborhood='gaussian', training='batch', name='sompy')  
-            som.train(n_job=6, verbose='info') #verbose='info' medium. verbose='debug' will print more, and verbose=None wont print anything
-
-            # Calculate and save topographic and quantization errors
-            te = som.calculate_topographic_error()
-            qe = np.mean(som._bmu[1])
-            print ("Topographic error = %s; Quantization error = %s" % (te,qe))
-            teqe = (te,qe)
-            Errors.append(teqe)
-
-            # Visualise internal structure of SOM
-            if plot_SOM is True:
-                v = sompy.mapview.View2DPacked(50, 50, 'test', text_size=8)
-                fig = v.show(som, what='codebook', which_dim='all', cmap='jet', col_sz=6)  # which_dim='all' default
-                plt.savefig('mapview.png', dpi=200)
-
-                v = sompy.mapview.View2DPacked(2, 2, 'test', text_size=8)
-                v.show(som, what='cluster')
-
-                h = sompy.hitmap.HitMapView(10, 10, 'hitmap', text_size=8, show_text=True)
-                h.show(som)
-
-                vhts = sompy.visualization.bmuhits.BmuHitsView(40,40,"Hits Map",text_size=12)
-                vhts.show(som, anotate=True, onlyzeros=False, labelsize=12, cmap="Greys", logaritmic=False)
-
-                plts = sompy.visualization.dotmap.DotMapView(40, 40, "Dot Map", text_size=12)
-                plts.show(som) #lentissimo
-
-                u = sompy.umatrix.UMatrixView(50, 50, 'umatrix', show_axis=True, text_size=8, show_text=True)
-                UMAT = u.build_u_matrix(som, distance=1, row_normalized=False)
-                UMAT = u.show(som, distance2=1, row_normalized=False, show_data=True, contooor=True, blob=False)
-
-            # Use built-in function of SOMPY to perform clustering (k-means)
-            cl = som.cluster(n_clusters=n_clusters)
-
-            # save SOM
-            if save_trained_map is True:
-                if not os.path.isdir('trained_maps'):
-                    os.makedirs('trained_maps')
-                joblib.dump(som, 'trained_maps/' + FILE + EXTNAME)
-
-            # after creating the SOM, perform tests with hypothetical numbers of clusters to gain optimum
-            if CL_Determination is True:
-                cl_det(som,cl,mapname,plot_curves,degree)
 
 
+for z in range(len(mx)):
+    '''Performs analysis for each given map size/shape'''
+    print('Calculating SOM with dimensions '+str(mx[z])+'x'+str(my[z]))
 
+    mapsize = [mx[z], my[z]]
+    map_x, map_y = mx[z],my[z]
+    lattice = map_lattice[z]
 
-            if Test_and_Plot is True:
+    fbands = [] # collects frequency band of SOM
+    win_len = []# collects time window length
+    Errors = [] # collects topographic and quantization errors of map (for heatmap)
 
-                ###################################################
-                ############## T E S T   S T A G E ################
-                ###################################################
-
-                output = som.project_data(Traindata)
-                outputDF = pd.DataFrame(output) #for each data, outputDF contains its assigned SOM node (bmu)
-                cl = som.cluster(n_clusters=n_clusters)
-                cloutput = cl[output] #for each data, cloutput contains its assigned cluster
-                cloutputDF = pd.DataFrame(cloutput)
-                cloutputDF.to_csv('Clusters.csv', index=False, header=False)
-
-                to_start, to_end = int(to_start), int(to_end)
-                time_np = time_np[to_start:(to_start + to_end)]
-
-                if not os.path.isdir('tested_maps'):
-                    os.makedirs('tested_maps')
-
-                with open('tested_maps/' + FILE + EXTNAME, 'wb') as f:
-                    pickle.dump([time_np, cloutput], f)
-
-
-
-                #########################################################
-                ############## P L O T T I N G   D A T A ################
-                #########################################################
-
-                register_matplotlib_converters()  # to avoid warnings
-
-                # preparing time vector (conversion to timestamps)
-                with open('tested_maps/' + FILE + EXTNAME,'rb') as f:
-                    time_np, cloutput = pickle.load(f)
-                time_np = np.asarray(time_np)
-                time_np2 = []
-                for x in range(len(time_np)):
-                 try:
-                  time_np2.append(datetime.strptime(str(time_np[x]), '%Y-%m-%d %H:%M:%S'))
-                 except:
-                  time_np2.append(datetime.strptime(str(time_np[x]), '%Y-%m-%d'))
-                time_np = np.array(time_np2)
-
-
-                # plot initialization
-                fig, axarr = plt.subplots(1, sharex=True, sharey=False)
-                if interactive is False:
-                    fig.set_size_inches(16, 9)
-                axarr.set_yticklabels([])
-                axarr.axis('off')
-                ax = fig.add_subplot(1, 1, 1, sharex=fig.axes[0])
-                colormap = np.array(['r', 'purple', 'b', 'cyan', 'lime'])
-                tminimo = 0
-                tmassimo = time_np.shape[0]
-                colours = cloutput[tminimo:tmassimo] % colormap.shape[0]
-                ax.scatter(time_np[tminimo:tmassimo], cloutput[tminimo:tmassimo]+1, c=colormap[colours])
-                ax.set_xlim(min(time_np), max(time_np))
-                ax.set_ylabel('Cluster number', fontsize = 15)
-                ax.grid(linestyle='dotted', which='both')
-                ax.yaxis.set_major_locator(MaxNLocator(integer=True))
-                fig.subplots_adjust(hspace=0.05)
-                plt.setp([a.get_xticklabels() for a in fig.axes[:-1]], visible=False)
-
-                # change interval of ticks on x-axis here depending on length of time-period covered by data
-                ax.xaxis.set_major_locator(mdates.MonthLocator(interval=monthinterval))
-                ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
-                fig.autofmt_xdate()
-                plt.xticks(fontsize = 15)
-                plt.yticks(fontsize = 15)
-
-                # add events to plot
-                with open('../1_Feature_Extraction/RSAM/eruptive_periods.txt', 'r') as fp:
-                    tes = [ln.rstrip() for ln in fp.readlines()]
-                xcoords = tes
-                for xc in xcoords:
-                    ax.axvline(x = xc, color='k', linestyle='-', linewidth=2, label='_')
-                
-                with open('../1_Feature_Extraction/RSAM/activity.txt', 'r') as fp:
-                    act = [ln.rstrip() for ln in fp.readlines()]
-                cords = act
-                for co in cords:
-                    ax.axvline(x = co, color='dimgrey', linestyle='--', linewidth=2, label='_')
-
-                ax.axvline(x='2012-08-04 16:52:00', color='k', linestyle='-', linewidth=2, label='eruption')
-                ax.axvline(x='2012-09-02 00:00:00', color='dimgrey', linestyle='--', linewidth=2, label='ash emission')
-                ax.axvline(x='2012-11-24 00:00:00', color='dimgrey', linestyle=':', linewidth=2, label='observation of lava dome')
-
-
-                # add legend and title
-                ax.legend(bbox_to_anchor=(0.25, 1), fontsize = 15, ncol = 3)
-                TITLE = str(volcano + ', ' + station + '   fband: ' + fband +'   Cluster: ' + str(n_clusters) + '   SOM size: '+str(mx[z])+'x'+str(my[z]))
-
-                ppl.title(TITLE, loc='left')
-
-                # save plot
-                fig.set_size_inches(16, 6)
-                if not os.path.isdir('__OUTPUT'):
-                    os.makedirs('__OUTPUT')
-                path = '__OUTPUT/' + FILE + EXTNAME + '.png'
-                plt.savefig(path, dpi=600)
-
-                if interactive is True:
-                    fig.set_size_inches(15,8)
-                    ppl.ion()
-                    ppl.show()
-                    ppl.pause(1000)
-
-                plt.close()
-
-        if heatmap_on:
-            heatmap(Errors, n_clusters, win_len, fbands, mapsize)
-
-    if CL_Determination is True:
-
-        CLM = pd.DataFrame(list(cl_mode))
-        CLM.columns = ['cluster']
-        CL_fig = sns.displot(CLM, x='cluster', color='black', discrete=True, binwidth=1, stat='density')
-        CL_fig.savefig('CL_distribution.png', dpi=300)
-
-else:
-
-    if trainedmap is True:
+    for file in files:
+        print(file) # provide info on where the analysis is at
         Graphics = False  # False disables graphics, e.g. for batch
         logging.getLogger('matplotlib.font_manager').disabled = True
         plt.interactive(False)
 
-        mapsize = [5,5]
-        lattice = ['rect']
+        # Prepare name and path to save SOM
+        FILE = file[len(PATH):-4]  # removes ".csv"
+        EXTNAME = '_{:s}cl_{:s}x{:s}_{:s}_{:s}.pkl'.format(str(n_clusters),str(map_x),str(map_y),startdate,enddate) # save classification result under this name
+        mapname = FILE+EXTNAME[:-4] # full path to save classification result
 
-        Errors = []
+        # extract frequency band from filename (easier naming convention would make this easier; implemented in future)
+        fband = file[([index for index, character in enumerate(file) if character == '_'][-3]+1):([index for index, character in enumerate(file) if character == '_'][-2])]
+        fbands.append(fband)
+        window = file[([index for index, character in enumerate(file) if character == '_'][2]+1):([index for index, character in enumerate(file) if character == '_'][3]-4)]
+        win_len.append(window)
 
-        EXTNAME = '_{:s}cl_{:s}x{:s}_{:s}_{:s}.pkl'.format(str(n_clusters), str(mx[0]), str(my[0]), startdate_test, enddate_test)
+        # Load dataframe from startdate to enddate
+        df,to_start,to_end,time_np = load_data(file, startdate, enddate)
 
+        if TESTisTRAIN is True:
+            # Train a SOM on each given file in the directory
+            Traindata, som = training_stage(df, n_clusters, mapsize, lattice, plot_SOM, save_trained_map, CL_Determination)
 
-        # GET TEST DATA
+            # Introduce test data and plot classification result
+            if Test_and_Plot is True:
+                test_stage(Traindata, n_clusters, time_np, to_start, to_end, FILE, EXTNAME)
+                plot_data(FILE, EXTNAME, time_np, monthinterval, volcano, station, fband, n_clusters, map_x, map_y)
 
-        PATH = '/Users/bste426/Documents/All/PhD/Data/Codes/SOM_Carniel/csv2som/feature_matrices/'
-        fl = PATH + '*.csv'
-        p = len(PATH)
-        p2 = p + 31  # 31 symbols to remove from the file name to extract 'fband1-fband2'
-        files = glob.glob(fl)
-
-        fbands = [x[p2:-18] for x in files]  # removes everything before and after the frequency band info in the file name
-
-        FILE = files[0][p:-4]  # removes ".csv"
-        filename = PATH + FILE + '.csv'
-        df = pd.read_csv(filename, header=None)
-        time_np = df[0]
-
-        dates = list(time_np)
-
-        newdates = [x[:-9] for x in dates]
-        for row in newdates:
-            if startdate_test == row:
-                to_start = np.array(newdates.index(startdate_test))
-                break
-        for row in newdates:
-            if enddate_test == row:
-                to_end = np.array(newdates.index(enddate_test))
-                break
-        to_end = to_end - to_start
-        df = pd.read_csv(filename, header=None, skiprows=(int(to_start)), nrows=(int(to_end)))
-
-        dlen = df.shape[0]
-        time_np = df[0]
-        dfselection2 = pd.DataFrame(
-            data=df.iloc[0:dlen, 1:df.shape[1]])
-        Testdata = dfselection2.values
-        # LOAD TRAINED MAP
-
-        ### Insert trained map here:
-        som = joblib.load(trained_PATH)
-
-        # TEST DATA ON TRAINED MAP
-
-        output = som.project_data(Testdata)
-
-        outputDF = pd.DataFrame(output)  # for each data, outputDF contains its assigned SOM node (bmu)
-        cl = som.cluster(n_clusters=n_clusters)
-        cloutput = cl[output]  # for each data, cloutput contains its assigned cluster
-        cloutputDF = pd.DataFrame(cloutput)
-        cloutputDF.to_csv('Clusters.csv', index=False, header=False)
-
-        # SAVE MAP
-
-        if not os.path.isdir('tested_maps'):
-            os.makedirs('tested_maps')
-
-        if Art_matrix is True:
-            with open('tested_maps/' + FILE + EXTNAME, 'wb') as f:  # Python 3: open(..., 'wb')
-                pickle.dump([time_np, cloutput], f)
         else:
-            if extdrive is True:
-                with open('/Volumes/TheBigOne/Data/Maps/2019 NO/tested_maps/' + FILE + EXTNAME, 'wb') as f:  # Python 3: open(..., 'wb')
-                    pickle.dump([time_np, cloutput], f)
-            else:
-                with open('/Users/bste426/Documents/All/PhD/Data/Codes/SOM_Carniel/csv2som/tested_maps/' + FILE + EXTNAME, 'wb') as f:
-                    pickle.dump([time_np, cloutput], f)
+            if trainedmap is True:
 
-        ########### PLOTTING STAGE ###########
-
-        register_matplotlib_converters()  # to avoid warnings
-        if Art_matrix is True:
-            with open('tested_maps/' + FILE + EXTNAME, 'rb') as f:  # Python 3: open(..., 'wb')
-                time_np, cloutput = pickle.load(f)
-        else:
-            if extdrive is True:
-                with open('/Volumes/TheBigOne/Data/Maps/2019 NO/tested_maps/' + FILE + EXTNAME,
-                          'rb') as f:  # Python 3: open(..., 'wb')
-                    time_np, cloutput = pickle.load(f)
-            else:
-                with open('/Users/bste426/Documents/All/PhD/Data/Codes/SOM_Carniel/csv2som/tested_maps/' + FILE + EXTNAME,
-                          'rb') as f:
-                    time_np, cloutput = pickle.load(f)
-
-        time_np2 = []
-        for x in range(len(time_np)):
-            try:
-                time_np2.append(datetime.strptime(str(time_np[x]), '%Y-%m-%d %H:%M:%S'))
-            except:
-                time_np2.append(datetime.strptime(str(time_np[x]), '%Y-%m-%d'))
-
-        time_np = np.array(time_np2)
-
-        # plot initialization
-        fig, axarr = plt.subplots(1, sharex=True, sharey=False)
-        if interactive is False:
-            fig.set_size_inches(16, 9)
-        axarr.set_yticklabels([])
-        axarr.axis('off')
-        ax = fig.add_subplot(1, 1, 1, sharex=fig.axes[0])
-        colormap = np.array(['r', 'purple', 'b', 'cyan', 'lime'])
-        tminimo = 0
-        tmassimo = time_np.shape[0]
-        colours = cloutput[tminimo:tmassimo] % colormap.shape[0]
-        ax.scatter(time_np[tminimo:tmassimo], cloutput[tminimo:tmassimo] + 1, c=colormap[colours])
-        ax.set_xlim(min(time_np), max(time_np))
-        ax.set_ylabel('Cluster number')
-        ax.grid(linestyle='dotted', which='both')
-        ax.yaxis.set_major_locator(MaxNLocator(integer=True))
-        # plt.pause(0.001)
-        fig.subplots_adjust(hspace=0.05)
-        plt.setp([a.get_xticklabels() for a in fig.axes[:-1]], visible=False)
-
-        # change interval of ticks on x-axis here depending on length of time-period covered by data
-        test_startdate = datetime.strptime('2010-12-30 00:00:00', '%Y-%m-%d %H:%M:%S')
-        if min(time_np) < test_startdate:
-            ax.xaxis.set_major_locator(mdates.YearLocator(base=1, month=1, day=1, tz=None))
-        else:
-            ax.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
-        fig.autofmt_xdate()
-
-        # add events to plot
-        with open('act_log/eruptive_periods.txt', 'r') as fp:
-            tes = [ln.rstrip() for ln in fp.readlines()]
-        xcoords = tes
-        for xc in xcoords:
-            ax.axvline(x=xc, color='k', linestyle='-', linewidth=2, label='_')
-        with open('act_log/activity.txt', 'r') as fp:
-            act = [ln.rstrip() for ln in fp.readlines()]
-        cords = act
-        for co in cords:
-            ax.axvline(x=co, color='dimgrey', linestyle='--', linewidth=2, label='_')
-        ax.axvline(x='2012-08-04 16:52:00', color='k', linestyle='-', linewidth=2, label='eruption')
-        ax.axvline(x='2012-09-02 00:00:00', color='dimgrey', linestyle='--', linewidth=2, label='ash emission')
-        ax.axvline(x='2012-11-24 00:00:00', color='dimgrey', linestyle=':', linewidth=2, label='observation of lava dome')
-
-        # add legend and title
-        ax.legend(bbox_to_anchor=(0.79, 1))
-        TITLE = str(FILE + '   Cluster: ' + str(n_clusters) + '   SOM size: ' + str(mx[0]) + 'x' + str(my[0]))
-        ppl.title(TITLE, loc='left')
-
-        # save plot
-        fig.set_size_inches(16, 9)
-        if not os.path.isdir('../__OUTPUT'):
-            os.makedirs('../__OUTPUT')
-        if Art_matrix is True:
-            path = '../__OUTPUT/' + FILE + EXTNAME + '.png'
-        else:
-            if extdrive is True:
-                path = '/Volumes/TheBigOne/Data/Maps/2019 NO/plots/' + FILE + EXTNAME + '.png'
-            else:
-                path = '/Users/bste426/Documents/All/PhD/Data/Codes/SOM_Carniel/__OUTPUT/plots/' + FILE + EXTNAME + '.png'
-        plt.savefig(path, dpi=200)
-
-        if interactive is True:
-            fig.set_size_inches(15, 8)
-            ppl.ion()
-            ppl.show()
-            ppl.pause(1000)
-
-        plt.close()
-
-    else:
-        Errors = []
-
-        PATH = '/Users/bste426/Documents/All/PhD/Data/Codes/SOM_Carniel/csv2som/feature_matrices/'
-        fl = PATH + '*.csv'
-        p = len(PATH)
-        p2 = p + 31  # 31 symbols to remove from the file name to extract 'fband1-fband2'
-        files = glob.glob(fl)
-
-        fbands = [x[p2:-18] for x in files]  # removes everything before and after the frequency band info in the file name
-
-        for z in range(len(mx)):
-
-            mapsize = [mx[z], my[z]]
-            lattice = map_lattice[z]
-
-            for i in range(len(files)):
-
-
-                # TRAIN MAP WITH TRAIN DATA RANGE
-
-
-                Graphics = False  # False disables graphics, e.g. for batch
-                logging.getLogger('matplotlib.font_manager').disabled = True
-                plt.interactive(False)
-
-                FILE = files[i][77:-4]  # removes ".csv"
-                filename = PATH + FILE + '.csv'
-                df = pd.read_csv(filename, header=None, skiprows=1)
+                som = joblib.load(trained_PATH)
+                df,to_start,to_end,_ = load_data(file, startdate_test, enddate_test)
                 time_np = df[0]
-
-                dates = list(time_np)
-                print(startdate, enddate)
-
-                if len(dates[1]) < 11:
-                    newdates = dates
-                    for row in newdates:
-                        if startdate == row:
-                            to_start = np.array(newdates.index(startdate))
-                            break
-                    for row in newdates:
-                        if enddate == row:
-                            to_end = np.array(newdates.index(enddate))
-                            break
-                    to_end = to_end - to_start
-
-                else:
-                    newdates = [x[:-9] for x in dates]
-                    for row in newdates:
-                        if startdate == row:
-                            to_start = np.array(newdates.index(startdate))
-                            break
-                    for row in newdates:
-                        if enddate == row:
-                            to_end = np.array(newdates.index(enddate))
-                            break
-                    to_end = to_end - to_start
-
-                df = pd.read_csv(filename, header=None, skiprows=(int(to_start)), nrows=(int(to_end)), low_memory=False)
-
                 dlen = df.shape[0]
                 df.head()
-                dfselection2 = pd.DataFrame(
-                    data=df.iloc[0:dlen, 1:df.shape[1]])  # columns from 1 to 5. Not using column 0 which is time
+                dfselection2=pd.DataFrame(data=df.iloc[0:dlen, 1:df.shape[1]])
                 Traindata = dfselection2.values
-                som = sompy.SOMFactory.build(Traindata, mapsize, mask=None, mapshape='planar', lattice=lattice,
-                                             normalization='var', initialization='pca', neighborhood='gaussian',
-                                             training='batch',
-                                             name='sompy')  # this will use the default parameters, but i can change the initialization and neighborhood methods
-                # all_mapshapes = ['planar','toroid','cylinder'] ## Only planar is implemented!!!
-                # all_lattices = ['hexa','rect']
-                # all_initialization = ['random','pca']
+                EXTNAME = '_{:s}cl_{:s}x{:s}_{:s}_{:s}.pkl'.format(str(n_clusters),str(map_x),str(map_y),startdate_test,enddate_test)
+                # Introduce test data and plot classification result
+                if Test_and_Plot is True:
+                    test_stage(Traindata, n_clusters, time_np, to_start, to_end, FILE, EXTNAME)
+                    plot_data(FILE, EXTNAME, time_np, monthinterval, volcano, station, fband, n_clusters, map_x, map_y)
 
-                som.train(n_job=6, verbose='debug')
-                # verbose='info' medium. verbose='debug' will print more, and verbose=None wont print anything
-
-                te = som.calculate_topographic_error()
-                qe = np.mean(som._bmu[1])
-                print ("Topographic error = %s; Quantization error = %s" % (te, qe))
-
-                teqe = (te, qe)
-                Errors.append(teqe)
-
-                EXTNAME = '_{:s}cl_{:s}x{:s}_{:s}_{:s}.pkl'.format(str(n_clusters), str(mx[z]), str(my[z]), startdate,
-                                                                   enddate)
-                cl = som.cluster(n_clusters=n_clusters)
-
-                if plot_SOM is True:
-                    #v = sompy.mapview.View2DPacked(50, 50, 'test', text_size=8)
-                    #v.show(som, what='codebook', which_dim='all', cmap='jet', col_sz=6)  # which_dim='all' default
-
-                    #v = sompy.mapview.View2DPacked(2, 2, 'test', text_size=8)
-                    #v.show(som, what='cluster')
-
-                    h = sompy.hitmap.HitMapView(10, 10, 'hitmap', text_size=8, show_text=True)
-                    h.show(som)
-
-                    #vhts = sompy.visualization.bmuhits.BmuHitsView(40, 40, "Hits Map", text_size=12)
-                    #vhts.show(som, anotate=True, onlyzeros=False, labelsize=12, cmap="Greys", logaritmic=False)
-
-                    #plts = sompy.visualization.dotmap.DotMapView(40, 40, "Dot Map", text_size=12)
-                    #plts.show(som)  # lentissimo
-
-                    u = sompy.umatrix.UMatrixView(50, 50, 'umatrix', show_axis=True, text_size=8, show_text=True)
-                    UMAT = u.build_u_matrix(som, distance=1, row_normalized=False)
-                    UMAT = u.show(som, distance2=1, row_normalized=False, show_data=True, contooor=True, blob=False)
-
-
-                # if not os.path.isdir('trained_maps'):
-                # os.makedirs('trained_maps')
-
-                getattr(som, 'cluster_labels')
-
-                if save_trained_map is True:
-                    # joblib.dump(som, '/Volumes/TheBigOne/Data/Maps/'+FILE+EXTNAME)
-                    if Art_matrix is True:
-                        joblib.dump(som,
-                                    '/Users/bste426/Documents/All/PhD/Data/Codes/SOM_Carniel/csv2som/trained_maps/' + FILE + EXTNAME)
-                    else:
-                        if extdrive is True:
-                            joblib.dump(som, '/Volumes/TheBigOne/Data/Maps/2019 NO/trained_maps/' + FILE + EXTNAME)
-                        else:
-                            joblib.dump(som,
-                                        '/Users/bste426/Documents/All/PhD/Data/Codes/SOM_Carniel/csv2som/trained_maps/' + FILE + EXTNAME)
-
-
-                ########## CL DETERMINATION (OPTIONAL) ##########
-
-
-                mapname = FILE + EXTNAME[:-4]
-
-                if CL_Determination is True:
-
-                    cl_det(som, cl, mapname, plot_curves, degree)
-
-
-                ########## TESTING STAGE WITH TEST DATA RANGE ##########
-
-                # load test data
-
-                df = pd.read_csv(filename, header=None, skiprows=1)
+            else:
+                _, som = training_stage(df, n_clusters, mapsize, lattice, plot_SOM, save_trained_map, CL_Determination)
+                df,to_start,to_end,_ = load_data(file, startdate_test, enddate_test)
                 time_np = df[0]
-
-                dates = list(time_np)
-
-                if len(dates[1])<11:
-                    newdates = dates
-                    for row in newdates:
-                        if startdate_test == row:
-                            to_start = np.array(newdates.index(startdate_test))
-                            break
-                    for row in newdates:
-                        if enddate_test == row:
-                            to_end = np.array(newdates.index(enddate_test))
-                            break
-                    to_end = to_end - to_start
-                else:
-                    newdates = [x[:-9] for x in dates]
-                    for row in newdates:
-                        if startdate_test == row:
-                            to_start = np.array(newdates.index(startdate_test))
-                            break
-                    for row in newdates:
-                        if enddate_test == row:
-                            to_end = np.array(newdates.index(enddate_test))
-                            break
-                    to_end = to_end - to_start
-
-
-                df = pd.read_csv(filename, header=None, skiprows=(int(to_start)), nrows=(int(to_end)), low_memory=False)
-
                 dlen = df.shape[0]
-                time_np = df[0]
-                dfselection2 = pd.DataFrame(
-                    data=df.iloc[0:dlen, 1:df.shape[1]])
-                Testdata = dfselection2.values
+                df.head()
+                dfselection2=pd.DataFrame(data=df.iloc[0:dlen, 1:df.shape[1]])
+                Traindata = dfselection2.values
+                EXTNAME = '_{:s}cl_{:s}x{:s}_{:s}_{:s}.pkl'.format(str(n_clusters),str(map_x),str(map_y),startdate_test,enddate_test)
+                # Introduce test data and plot classification result
+                if Test_and_Plot is True:
+                    test_stage(Traindata, n_clusters, time_np, to_start, to_end, FILE, EXTNAME)
+                    plot_data(FILE, EXTNAME, time_np, monthinterval, volcano, station, fband, n_clusters, map_x, map_y)
 
-                # test SOM
+    if heatmap_on:
+        heatmap(Errors, n_clusters, win_len, fbands, mapsize)
 
-                #with open('/Users/bst/Documents/All/PhD/Data/Codes/SOM_Carniel/csv2som/tested_maps/whakaari_043200.00wndw_rsam_10_2.00-5.00_data_features_5cl_5x5_2016-01-01_2020-01-01.pkl', 'rb') as f:  # Python 3: open(..., 'wb')
-                #    time_np, cloutput = pickle.load(f)
-                output = som.project_data(Testdata)
-                outputDF = pd.DataFrame(output)  # for each data, outputDF contains its assigned SOM node (bmu)
-                cl = som.cluster(n_clusters=n_clusters)
-                cloutput = cl[output]  # for each data, cloutput contains its assigned cluster
-                cloutputDF = pd.DataFrame(cloutput)
-                cloutputDF.to_csv('Clusters.csv', index=False, header=False)
-
-                time_np = df[0]
-
-                if not os.path.isdir('tested_maps'):
-                    os.makedirs('tested_maps')
-
-                if Art_matrix is True:
-                    with open('tested_maps/' + FILE + EXTNAME, 'wb') as f:  # Python 3: open(..., 'wb')
-                        pickle.dump([time_np, cloutput], f)
-                else:
-                    if extdrive is True:
-                        with open('/Volumes/TheBigOne/Data/Maps/2019 NO/tested_maps/' + FILE + EXTNAME,
-                                  'wb') as f:  # Python 3: open(..., 'wb')
-                            pickle.dump([time_np, cloutput], f)
-                    else:
-                        with open(
-                                '/Users/bste426/Documents/All/PhD/Data/Codes/SOM_Carniel/csv2som/tested_maps/' + FILE + EXTNAME,
-                                'wb') as f:
-                            pickle.dump([time_np, cloutput], f)
-
-                ########### PLOTTING STAGE ###########
-
-                register_matplotlib_converters()  # to avoid warnings
-                if Art_matrix is True:
-                    with open('tested_maps/' + FILE + EXTNAME, 'rb') as f:  # Python 3: open(..., 'wb')
-                        time_np, cloutput = pickle.load(f)
-                else:
-                    if extdrive is True:
-                        with open('/Volumes/TheBigOne/Data/Maps/2019 NO/tested_maps/' + FILE + EXTNAME,
-                                  'rb') as f:  # Python 3: open(..., 'wb')
-                            time_np, cloutput = pickle.load(f)
-                    else:
-                        with open(
-                                '/Users/bste426/Documents/All/PhD/Data/Codes/SOM_Carniel/csv2som/tested_maps/' + FILE + EXTNAME,
-                                'rb') as f:
-                            time_np, cloutput = pickle.load(f)
-
-                time_np2 = []
-                for x in range(len(time_np)):
-                    try:
-                        time_np2.append(datetime.strptime(str(time_np[x]), '%Y-%m-%d %H:%M:%S'))
-                    except:
-                        time_np2.append(datetime.strptime(str(time_np[x]), '%Y-%m-%d'))
-
-                time_np = np.array(time_np2)
-
-                # plot initialization
-                fig, axarr = plt.subplots(1, sharex=True, sharey=False)
-                if interactive is False:
-                    fig.set_size_inches(16, 5)
-                axarr.set_yticklabels([])
-                axarr.axis('off')
-                ax = fig.add_subplot(1, 1, 1, sharex=fig.axes[0])
-                colormap = np.array(['r', 'purple', 'b', 'cyan', 'lime'])
-                tminimo = 0
-                tmassimo = time_np.shape[0]
-
-                colours = cloutput[tminimo:tmassimo] % colormap.shape[0]
-                ax.scatter(time_np[tminimo:tmassimo], cloutput[tminimo:tmassimo] + 1, c=colormap[colours])
-                ax.set_xlim(min(time_np), max(time_np))
-                ax.set_ylabel('Cluster number', fontsize = 15)
-                ax.grid(linestyle='dotted', which='both')
-                ax.yaxis.set_major_locator(MaxNLocator(integer=True))
-                # plt.pause(0.001)
-                fig.subplots_adjust(hspace=0.05)
-                plt.setp([a.get_xticklabels() for a in fig.axes[:-1]], visible=False)
-
-                # change interval of ticks on x-axis here depending on length of time-period covered by data
-                test_startdate = datetime.strptime('2010-12-30 00:00:00', '%Y-%m-%d %H:%M:%S')
-                if min(time_np) < test_startdate:
-                    ax.xaxis.set_major_locator(mdates.YearLocator(base=1, month=1, day=1, tz=None))
-                else:
-                    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=monthinterval))
-                ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
-                fig.autofmt_xdate()
-                plt.yticks(fontsize = 15)
-                plt.xticks(fontsize = 15)
-
-
-                # add events to plot
-                with open('act_log/eruptive_periods.txt', 'r') as fp:
-                    tes = [ln.rstrip() for ln in fp.readlines()]
-                xcoords = tes
-                for xc in xcoords:
-                    ax.axvline(x=xc, color='k', linestyle='-', linewidth=2, label='_')
-                with open('act_log/activity.txt', 'r') as fp:
-                    act = [ln.rstrip() for ln in fp.readlines()]
-                cords = act
-                for co in cords:
-                    ax.axvline(x=co, color='dimgrey', linestyle='--', linewidth=2, label='_')
-                ax.axvline(x='2012-08-04 16:52:00', color='k', linestyle='-', linewidth=2, label='eruption')
-                ax.axvline(x='2012-09-02 00:00:00', color='dimgrey', linestyle='--', linewidth=2,
-                           label='ash emission')
-                ax.axvline(x='2012-11-24 00:00:00', color='dimgrey', linestyle=':', linewidth=2,
-                           label='observation of lava dome')
-                '''
-
-                # include earthquake events into classification plot
-                with open('act_log/tectonics.txt', 'r') as fp:
-                    tecs = [ln.rstrip() for ln in fp.readlines()]
-                xcoords = tecs
-                for xc in xcoords:
-                    ax.axvline(x=xc, color='green', linestyle='-', linewidth=3, label='_')
-                '''
-
-                # add legend and title
-                ax.legend(bbox_to_anchor=(0.25, 1), fontsize = 15, ncol=3)
-                TITLE = str(FILE + '   Cluster: ' + str(n_clusters) + '   SOM size: ' + str(mx[z]) + 'x' + str(my[z]))
-                #ppl.title(TITLE, loc='left')
-
-                # save plot
-                fig.set_size_inches(16, 6)
-                if not os.path.isdir('../__OUTPUT/plots'):
-                    os.makedirs('../__OUTPUT/plots')
-                if Art_matrix is True:
-                    path = '../__OUTPUT/plots/' + FILE + EXTNAME + '.png'
-                else:
-                    if extdrive is True:
-                        path = '/Volumes/TheBigOne/Data/Maps/2019 NO/plots/' + FILE + EXTNAME + '.png'
-                    else:
-                        path = '/Users/bste426/Documents/All/PhD/Data/Codes/SOM_Carniel/__OUTPUT/plots/' + FILE + EXTNAME + '.png'
-                plt.tight_layout()
-                plt.savefig(path, dpi=600)
-                '''
-                if interactive is True:
-                    fig.set_size_inches(15, 8)
-                    ppl.ion()
-                    ppl.show()
-                    ppl.pause(1000)
-                '''
-                plt.close()
+if CL_Determination is True:
+    # Concatenates all collected cluster numbers from statistical tests across all map sizes and matrices
+    CLM = pd.DataFrame(list(cl_mode))
+    CLM.columns = ['cluster']
+    CL_fig = sns.displot(CLM, x='cluster', color='black', discrete=True, binwidth=1, stat='density')
+    CL_fig.savefig('CL_distribution.png', dpi=300)
