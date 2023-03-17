@@ -25,6 +25,7 @@ from datetime import datetime, timedelta, date
 import jsonpickle, json
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import PolynomialFeatures
+from sklearn import preprocessing
 from sklearn.cluster import KMeans
 from itertools import combinations
 from sklearn.preprocessing import MinMaxScaler
@@ -40,24 +41,33 @@ SOM will reconstruct the input data structure in reduced dimensionality, before 
 '''
 
 
-########################
-#### INITIALISATION ####
-########################
+
+#####################################
+#### I N I T I A L I S A T I O N ####
+#####################################
 
 #Name of volcano, station:
 volcano = 'Whakaari'
 station = 'WIZ'
 
 # What time-period would you like to train the SOM with? (train data)
-startdate = '2012-08-01'    # min.: 2008-06-02 (2-day and 5-day matrix)
-enddate = '2012-08-05'      # max.: 2020-12-26 (last common day in 2-day and 5-day matrix)
+startdate = '2011-06-01'    # min.: 2008-06-02 (2-day and 5-day matrix)
+enddate = '2012-06-01'      # max.: 2020-12-26 (last common day in 2-day and 5-day matrix)
 
 # Folder of feature matrices (default):
 PATH = '../1_Feature_Extraction/features/'
 files = glob.glob(PATH + '*.csv')
 
+# Feature matrices should be normalised:
+normalise_matrix = True
+
+
+
+#################################
+### A N A L Y S I S   M O D E ###
+#################################
+
 # Are training and test data sets the same? (This is to reproduce the structure of the training data itself.)
-'This has to be on True now, alternative will be available very soon (March 2023) once the code is updated.'
 TESTisTRAIN = False 
 
 if TESTisTRAIN is False:
@@ -66,71 +76,83 @@ if TESTisTRAIN is False:
     '''
 
     # Specify time period of test data (data you want to be looking at in the end):
-    startdate_test = '2012-08-02'
-    enddate_test = '2012-08-04'
+    startdate_test = '2012-06-01'
+    enddate_test = '2013-12-31'
     # Do you already have a trained map?
-    trainedmap = True
+    trainedmap = False
     # If so: Where can the trained map be found?
     trained_PATH = 'trained_maps/whakaari_3600.00wndw_rsam_10_1.00-15.00_data_features_5cl_5x5_2012-08-01_2012-08-05.pkl'
 
-# Plot SOM visualisations?
-plot_SOM = False
-
-timewindow = 'all'  # ignore (could be specified for data nomenclature purposes if only a specific time window length is being used)
+# Plot visualised SOM structure?
+plot_SOM = True # to prevent it from showing the plots, deactivate the plt.show() function in line 171 in sompy/visualization/mapview.py as well as line 94 in sompy/visualization/umatrix.py.
 
 # Shall the trained map be saved (or not, to save disk space)?
 save_trained_map = True
+
 # Shall the maps be tested and plotted or just trained (not needed e.g. when you only want to train a SOM and then use it at 'trained_PATH' in 'TESTisTRAIN' = False )?
 Test_and_Plot = True
-monthinterval = 1   #interval of x-ticks in months (adapt for visual reasons depending on test length)
-# Shall the maps be interactive for close-ups?
+monthinterval = 3   #interval of x-ticks in months (adapt for visual reasons depending on test length)
+
+# Shall the maps be interactive for close-ups? (shows immediately, turn off for batch)
 interactive = False
+
 # Would you like to compute SOM errors? (default: False.This feature is only really useful when using a large set of consistent feature matrices, i.e. complete combinations of frequency bands and time window lengths)
-heatmap_on = False
+heatmap_on = True
 
 
 
-#######################
-### HYPERPARAMETERS ###
-#######################
+#####################################
+### H Y P E R P A R A M E T E R S ###
+#####################################
 
 '''Remember that two key parameters, data frequency band, RSAM interval and time window length, have been specified during feature extraction.
 '''
 
 #mapsize (number of neurons, for multiple SOM sizes):
-mx = [5,10]#,15]#,10,16,20,30]   #  x-dimension of SOM
-my = [5,10]#,15]#,40,25,20,30]   #  y-dimension of SOM
+mx = [5]#,10]#,15,10,16,20,30]   #  x-dimension of SOM
+my = [5]#,10]#,15,40,25,20,30]   #  y-dimension of SOM
 
 #map_lattice:
-map_lattice = ['rect','rect']#,'rect']#,'rect','rect','rect','rect'] # 'rect'(angular) or 'hexa'(gonal)
+lattice_shape = 'rect' #rectangular, otherwise 'hexa' for hexagonal. Can be adapted to individual maps, e.g. ['rect','hexa','rect','rect',...] (deactivate l 117)
+map_lattice = [lattice_shape for i in range(len(mx))]
 
 #number of clusters:
 n_clusters = 5 # Initially, you can perform statistical tests to get an estimate of a suitable number of clusters (see below).
 
 # Do you want to calculate a suggested number of cluster?
-CL_Determination = False #This is implemented for batch processing when TESTisTrain = 'True'. Otherwise, use individual matrices with pre-defined n_clusters.
+CL_Determination = True #This is implemented for batch processing when TESTisTrain = 'True'. Otherwise, use individual matrices with pre-defined n_clusters.
 cl_mode = []
 # Create output from statistical tests?
-plot_curves = True
+plot_curves = False
 # Use linear or polynomial detrending of curves to find maxima/minima performance scores?
-Polynomial_Detrend = True
+Polynomial_Detrend = False
 degree = 4
+
+
+
+#########################
+### F U N C T I O N S ###
+#########################
 
 def load_data(file, startdate, enddate):
     df = pd.read_csv(file, header=None, low_memory=False)
     time_np = df[0]
     dates = list(time_np)
-    newdates = [x[:-9] for x in dates]
+    #make sure time format is converted correctly
+    if len(dates[1]) > 10:
+        newdates = [x[:-9] for x in dates]
+    else:
+        newdates = [x for x in dates]
     for row in newdates:
         if startdate == row:
-            to_start = np.array(newdates.index(startdate))
+            to_start = int(np.array(newdates.index(startdate)))
             break
     for row in newdates:
         if enddate == row:
-            to_end = np.array(newdates.index(enddate))
+            to_end = int(np.array(newdates.index(enddate)))
             break
     to_end = to_end - to_start
-    df = pd.read_csv(file, header=None, skiprows=(int(to_start)), nrows=(int(to_end)),low_memory=False)
+    df = pd.read_csv(file, header=None, skiprows=to_start, nrows=to_end,low_memory=False)
 
     return df, to_start, to_end, time_np
 
@@ -139,49 +161,55 @@ def training_stage(df, n_clusters, mapsize, lattice, plot_SOM, save_trained_map,
     dlen = df.shape[0]
     df.head()
     dfselection2=pd.DataFrame(data=df.iloc[0:dlen, 1:df.shape[1]])
+
+    if normalise_matrix is True:
+        x = dfselection2.values #returns a numpy array
+        min_max_scaler = preprocessing.MinMaxScaler()
+        x_scaled = min_max_scaler.fit_transform(x)
+        Traindata = pd.DataFrame(x_scaled).values
+    else:
+        Traindata = dfselection2.values
+
     Traindata = dfselection2.values
 
     # This builds the SOM using pre-defined hyperparameters and other default parameters. Initialization can be 'random' or 'pca'.
-    som = sompy.SOMFactory.build(Traindata, mapsize, mask=None, mapshape='planar', lattice=lattice, normalization='None', initialization='pca', neighborhood='gaussian', training='batch', name='sompy')  
+    som = sompy.SOMFactory.build(Traindata, mapsize, mask=None, mapshape='planar', lattice=lattice, normalization='var', initialization='pca', neighborhood='gaussian', training='batch', name='sompy')  
     som.train(n_job=6, verbose='info') #verbose='info' medium. verbose='debug' will print more, and verbose=None wont print anything
-
     # Calculate and save topographic and quantization errors
     te = som.calculate_topographic_error()
-    qe = np.mean(som._bmu[1])
+    qe = som.calculate_quantization_error()
     print ("Topographic error = %s; Quantization error = %s" % (te,qe))
     teqe = (te,qe)
     Errors.append(teqe)
 
     # Visualise internal structure of SOM
     if plot_SOM is True:
-        v = sompy.mapview.View2DPacked(50, 50, 'test', text_size=8)
-        fig = v.show(som, what='codebook', which_dim='all', cmap='jet', col_sz=6)  # which_dim='all' default
-        plt.savefig('mapview.png', dpi=200)
+        if not os.path.isdir('OUTPUT/insideSOM'):
+            os.makedirs('OUTPUT/insideSOM')
 
-        v = sompy.mapview.View2DPacked(2, 2, 'test', text_size=8)
+        v = sompy.mapview.View2DPacked(10, 10, 'test', text_size=1)
         v.show(som, what='cluster')
+        plt.savefig('OUTPUT/insideSOM/mapview_'+ FILE + EXTNAME[:-4] + '.png', dpi=200)
+        plt.close()
 
         h = sompy.hitmap.HitMapView(10, 10, 'hitmap', text_size=8, show_text=True)
         h.show(som)
-
-        vhts = sompy.visualization.bmuhits.BmuHitsView(40,40,"Hits Map",text_size=12)
-        vhts.show(som, anotate=True, onlyzeros=False, labelsize=12, cmap="Greys", logaritmic=False)
-
-        plts = sompy.visualization.dotmap.DotMapView(40, 40, "Dot Map", text_size=12)
-        plts.show(som) #lentissimo
+        plt.savefig('OUTPUT/insideSOM/hitmap_'+ FILE + EXTNAME[:-4] + '.png', dpi=200)
+        plt.close()
 
         u = sompy.umatrix.UMatrixView(50, 50, 'umatrix', show_axis=True, text_size=8, show_text=True)
-        UMAT = u.build_u_matrix(som, distance=1, row_normalized=False)
-        UMAT = u.show(som, distance2=1, row_normalized=False, show_data=True, contooor=True, blob=False)
-
+        u.show(som, distance2=1, row_normalized=False, show_data=True, contooor=True, blob=False)
+        plt.savefig('OUTPUT/insideSOM/uMatrix_'+ FILE + EXTNAME[:-4] + '.png', dpi=200)
+        plt.close()
+        
     # Use built-in function of SOMPY to perform clustering (k-means)
     cl = som.cluster(n_clusters=n_clusters)
 
     # save SOM
     if save_trained_map is True:
-        if not os.path.isdir('trained_maps'):
-            os.makedirs('trained_maps')
-        joblib.dump(som, 'trained_maps/' + FILE + EXTNAME)
+        if not os.path.isdir('OUTPUT/trained_maps'):
+            os.makedirs('OUTPUT/trained_maps')
+        joblib.dump(som, 'OUTPUT/trained_maps/' + FILE + EXTNAME)
 
     # after creating the SOM, perform tests with hypothetical numbers of clusters to gain optimum
     if CL_Determination is True:
@@ -190,27 +218,27 @@ def training_stage(df, n_clusters, mapsize, lattice, plot_SOM, save_trained_map,
     return Traindata, som
 
 def test_stage(Traindata, n_clusters, time_np, to_start, to_end, FILE, EXTNAME):
-    output = som.project_data(Traindata)
-    cl = som.cluster(n_clusters=n_clusters)
+    output = som.project_data(Traindata) # this is where the data (labelled 'Traindata', even though here it is the test data set) are introduced
+    cl = som.cluster(n_clusters=n_clusters) # performs clustering
     cloutput = cl[output] #for each data, cloutput contains its assigned cluster
     cloutputDF = pd.DataFrame(cloutput)
-    if not os.path.isdir('cluster_vectors'):
-        os.makedirs('cluster_vectors')
-    cloutputDF.to_csv('cluster_vectors/clusters_'+ FILE + EXTNAME[:-4] +'.csv', index=False, header=False)
+    if not os.path.isdir('OUTPUT/cluster_vectors'):
+        os.makedirs('OUTPUT/cluster_vectors')
+    cloutputDF.to_csv('OUTPUT/cluster_vectors/clusters_'+ FILE + EXTNAME[:-4] +'.csv', index=False, header=False)
 
     to_start, to_end = int(to_start), int(to_end)
     time_np = time_np[to_start:(to_start + to_end)]
 
-    if not os.path.isdir('tested_maps'):
-        os.makedirs('tested_maps')
+    if not os.path.isdir('OUTPUT/tested_maps'):
+        os.makedirs('OUTPUT/tested_maps')
 
-    with open('tested_maps/' + FILE + EXTNAME, 'wb') as f:
+    with open('OUTPUT/tested_maps/' + FILE + EXTNAME, 'wb') as f:
         pickle.dump([time_np, cloutput], f)
 
 def plot_data(FILE, EXTNAME, time_np, monthinterval, volcano, station, fband, n_clusters, map_x, map_y):
     
     # preparing time vector (conversion to timestamps)
-    with open('tested_maps/' + FILE + EXTNAME,'rb') as f:
+    with open('OUTPUT/tested_maps/' + FILE + EXTNAME,'rb') as f:
         time_np, cloutput = pickle.load(f)
     time_np = np.asarray(time_np)
     time_np2 = []
@@ -235,7 +263,7 @@ def plot_data(FILE, EXTNAME, time_np, monthinterval, volcano, station, fband, n_
     colours = cloutput[tminimo:tmassimo] % colormap.shape[0]
     ax.scatter(time_np[tminimo:tmassimo], cloutput[tminimo:tmassimo]+1, c=colormap[colours])
     ax.set_xlim(min(time_np), max(time_np))
-    ax.set_ylabel('Cluster number', fontsize = 15)
+    ax.set_ylabel('Cluster number', fontsize = 12)
     ax.grid(linestyle='dotted', which='both')
     ax.yaxis.set_major_locator(MaxNLocator(integer=True))
     fig.subplots_adjust(hspace=0.05)
@@ -245,8 +273,8 @@ def plot_data(FILE, EXTNAME, time_np, monthinterval, volcano, station, fband, n_
     ax.xaxis.set_major_locator(mdates.MonthLocator(interval=monthinterval))
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
     fig.autofmt_xdate()
-    plt.xticks(fontsize = 15)
-    plt.yticks(fontsize = 15)
+    plt.xticks(fontsize = 12)
+    plt.yticks(fontsize = 12)
 
     # add events to plot
     with open('../1_Feature_Extraction/RSAM/eruptive_periods.txt', 'r') as fp:
@@ -267,16 +295,16 @@ def plot_data(FILE, EXTNAME, time_np, monthinterval, volcano, station, fband, n_
 
 
     # add legend and title
-    ax.legend(bbox_to_anchor=(0.25, 1), fontsize = 15, ncol = 3)
+    ax.legend(bbox_to_anchor=(1.005, 1.075), loc='upper right', fontsize = 9, ncol = 3)
     TITLE = str(volcano + ', ' + station + '   fband: ' + fband +'   Cluster: ' + str(n_clusters) + '   SOM size: '+str(map_x)+'x'+str(map_y))
 
     ppl.title(TITLE, loc='left')
 
     # save plot
     fig.set_size_inches(16, 6)
-    if not os.path.isdir('__OUTPUT'):
-        os.makedirs('__OUTPUT')
-    path = '__OUTPUT/' + FILE + EXTNAME + '.png'
+    if not os.path.isdir('OUTPUT/classification_plots'):
+        os.makedirs('OUTPUT/classification_plots')
+    path = 'OUTPUT/classification_plots/' + FILE + EXTNAME + '.png'
     plt.savefig(path, dpi=600)
 
     if interactive is True:
@@ -390,9 +418,9 @@ def cl_det(som, cl, mapname, plot_curves, degree):
 
     if Polynomial_Detrend is False:
         # (removes linear trend from score_values and calculates local maxima (Sil&V-Meas.) / minima (DB))
-        loc_min_kms = ss.argrelextrema(ss.detrend(np.asarray(km_silhouette)), np.greater)
+        loc_max_kms = ss.argrelextrema(ss.detrend(np.asarray(km_silhouette)), np.greater)
         loc_min_db = ss.argrelextrema(ss.detrend(np.asarray(db_score)), np.less)
-        loc_min_v_meas = ss.argrelextrema(ss.detrend(np.asarray(vmeasure_score)), np.greater)
+        loc_max_v_meas = ss.argrelextrema(ss.detrend(np.asarray(vmeasure_score)), np.greater)
 
     else:
         # (removes polynomial trend from values and calculates local max/min)
@@ -473,8 +501,8 @@ def cl_det(som, cl, mapname, plot_curves, degree):
 
         logging.getLogger('matplotlib.font_manager').disabled = True
 
-        if not os.path.isdir('cl_OUTPUT'):
-            os.makedirs('cl_OUTPUT')
+        if not os.path.isdir('OUTPUT/cl_OUTPUT'):
+            os.makedirs('OUTPUT/cl_OUTPUT')
 
         '''
         # Elbow method
@@ -493,7 +521,7 @@ def cl_det(som, cl, mapname, plot_curves, degree):
         ppl.ylabel("K-means score", fontsize=15)
         ppl.xticks([i for i in range(Min_num_clusters_for_plot, Max_num_clusters_for_plot)], fontsize=14)
         ppl.yticks(fontsize=15)
-        ppl.savefig('cl_OUTPUT/elbow_' + mapname + '.png', dpi=200)
+        ppl.savefig('OUTPUT/cl_OUTPUT/elbow_' + mapname + '.png', dpi=200)
 
 
         # Elbow method, Derivative
@@ -512,7 +540,7 @@ def cl_det(som, cl, mapname, plot_curves, degree):
         ppl.ylabel("K-means score", fontsize=15)
         ppl.xticks([i for i in range(Min_num_clusters_for_plot, Max_num_clusters_for_plot_1)], fontsize=14)
         ppl.yticks(fontsize=15)
-        ppl.savefig('cl_OUTPUT/elbow_derivative'+map+'.png', dpi=200)
+        ppl.savefig('OUTPUT/cl_OUTPUT/elbow_derivative'+map+'.png', dpi=200)
         '''
 
         # V-Measure for Evaluating Clustering Performance (compared to known labels)
@@ -532,7 +560,7 @@ def cl_det(som, cl, mapname, plot_curves, degree):
         ppl.xticks([i for i in range(Min_num_clusters_for_plot, Max_num_clusters_for_plot)],
                     fontsize=14)
         ppl.yticks(fontsize=15)
-        ppl.savefig('cl_OUTPUT/V-measure_' + mapname + '.png', dpi=200)
+        ppl.savefig('OUTPUT/cl_OUTPUT/V-measure_' + mapname + '.png', dpi=200)
 
         # Silhouette method
         ppl.figure(figsize=(hsize, vsize))
@@ -551,7 +579,7 @@ def cl_det(som, cl, mapname, plot_curves, degree):
         ppl.xticks([i for i in range(Min_num_clusters_for_plot, Max_num_clusters_for_plot)],
                     fontsize=14)
         ppl.yticks(fontsize=15)
-        ppl.savefig('cl_OUTPUT/silhouette_' + mapname + '.png', dpi=200)
+        ppl.savefig('OUTPUT/cl_OUTPUT/silhouette_' + mapname + '.png', dpi=200)
 
         # Davies-Bouldin score
         ppl.figure(figsize=(hsize, vsize))
@@ -570,7 +598,7 @@ def cl_det(som, cl, mapname, plot_curves, degree):
         ppl.xticks([i for i in range(Min_num_clusters_for_plot, Max_num_clusters_for_plot)],
                     fontsize=14)
         ppl.yticks(fontsize=15)
-        ppl.savefig('cl_OUTPUT/Davies-Bouldin_' + mapname + '.png', dpi=200)
+        ppl.savefig('OUTPUT/cl_OUTPUT/Davies-Bouldin_' + mapname + '.png', dpi=200)
 
         '''
         # BIC score with a Gaussian Mixture Model
@@ -595,7 +623,7 @@ def cl_det(som, cl, mapname, plot_curves, degree):
         ppl.ylabel("Log of Gaussian mixture BIC score", fontsize=15)
         ppl.xticks([i for i in range(Min_num_clusters_for_plot, Max_num_clusters_for_plot)], fontsize=14)
         ppl.yticks(fontsize=15)
-        ppl.savefig('cl_OUTPUT/BIC(GMM)'+mapname+'.png', dpi=200)
+        ppl.savefig('OUTPUT/cl_OUTPUT/BIC(GMM)'+mapname+'.png', dpi=200)
 
 
         # (Log-)likelihood score
@@ -614,7 +642,7 @@ def cl_det(som, cl, mapname, plot_curves, degree):
         ppl.ylabel("Gaussian mixture GM_score", fontsize=15)
         ppl.xticks([i for i in range(Min_num_clusters_for_plot, Max_num_clusters_for_plot)], fontsize=14)
         ppl.yticks(fontsize=15)
-        ppl.savefig('cl_OUTPUT/(Log-)Likelihood_score_' + mapname + '.png', dpi=200)
+        ppl.savefig('OUTPUT/cl_OUTPUT/(Log-)Likelihood_score_' + mapname + '.png', dpi=200)
         '''
     ppl.close('all')
 
@@ -642,9 +670,9 @@ def heatmap(Errors, n_clusters, win_len, fbands, mapsize):
     ax.set_ylabel('Window length', fontsize=20)
     ax.set_xlabel('Frequency band [Hz]', fontsize=20)
     plt.title(title, fontsize=25)
-    if not os.path.isdir('__OUTPUT/heatmapsTE'):
-        os.makedirs('__OUTPUT/heatmapsTE')
-    plt.savefig('__OUTPUT/heatmapsTE/' + 'TE ' + volcano + ' ' + station + ' ' + map + '.png', dpi=300)
+    if not os.path.isdir('OUTPUT/heatmaps/heatmapsTE'):
+        os.makedirs('OUTPUT/heatmaps/heatmapsTE')
+    plt.savefig('OUTPUT/heatmaps/heatmapsTE/' + 'TE ' + volcano + ' ' + station + ' ' + map + '.png', dpi=300)
 
     # Quantization error
     QE = np.asarray(QEnorm).reshape(len(set(win_len)), len(set(fbands)))
@@ -657,13 +685,17 @@ def heatmap(Errors, n_clusters, win_len, fbands, mapsize):
     ax.set_ylabel('Window length', fontsize=20)
     ax.set_xlabel('Frequency band [Hz]', fontsize=20)
     plt.title(title, fontsize=25)
-    if not os.path.isdir('__OUTPUT/heatmapsQE'):
-        os.makedirs('__OUTPUT/heatmapsQE')
-    plt.savefig('__OUTPUT/heatmapsQE/' + 'QE ' + volcano + ' ' + station + ' ' + map + '.png',
+    if not os.path.isdir('OUTPUT/heatmaps/heatmapsQE'):
+        os.makedirs('OUTPUT/heatmaps/heatmapsQE')
+    plt.savefig('OUTPUT/heatmaps/heatmapsQE/' + 'QE ' + volcano + ' ' + station + ' ' + map + '.png',
                 dpi=300)
     plt.close('all')
 
 
+
+###################################
+### S T A R T   A N A L Y S I S ###
+###################################
 
 for z in range(len(mx)):
     '''Performs analysis for each given map size/shape'''
@@ -715,6 +747,13 @@ for z in range(len(mx)):
                 dlen = df.shape[0]
                 df.head()
                 dfselection2=pd.DataFrame(data=df.iloc[0:dlen, 1:df.shape[1]])
+                if normalise_matrix is True:
+                    x = dfselection2.values #returns a numpy array
+                    min_max_scaler = preprocessing.MinMaxScaler()
+                    x_scaled = min_max_scaler.fit_transform(x)
+                    Traindata = pd.DataFrame(x_scaled).values
+                else:
+                    Traindata = dfselection2.values
                 Traindata = dfselection2.values
                 EXTNAME = '_{:s}cl_{:s}x{:s}_{:s}_{:s}.pkl'.format(str(n_clusters),str(map_x),str(map_y),startdate_test,enddate_test)
                 # Introduce test data and plot classification result
@@ -729,6 +768,13 @@ for z in range(len(mx)):
                 dlen = df.shape[0]
                 df.head()
                 dfselection2=pd.DataFrame(data=df.iloc[0:dlen, 1:df.shape[1]])
+                if normalise_matrix is True:
+                    x = dfselection2.values #returns a numpy array
+                    min_max_scaler = preprocessing.MinMaxScaler()
+                    x_scaled = min_max_scaler.fit_transform(x)
+                    Traindata = pd.DataFrame(x_scaled).values
+                else:
+                    Traindata = dfselection2.values
                 Traindata = dfselection2.values
                 EXTNAME = '_{:s}cl_{:s}x{:s}_{:s}_{:s}.pkl'.format(str(n_clusters),str(map_x),str(map_y),startdate_test,enddate_test)
                 # Introduce test data and plot classification result
@@ -744,4 +790,4 @@ if CL_Determination is True:
     CLM = pd.DataFrame(list(cl_mode))
     CLM.columns = ['cluster']
     CL_fig = sns.displot(CLM, x='cluster', color='black', discrete=True, binwidth=1, stat='density')
-    CL_fig.savefig('CL_distribution.png', dpi=300)
+    CL_fig.savefig('OUTPUT/cluster_distribution.png', dpi=300)
