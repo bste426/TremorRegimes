@@ -68,7 +68,7 @@ normalise_matrix = True
 #################################
 
 # Are training and test data sets the same? (This is to reproduce the structure of the training data itself.)
-TESTisTRAIN = False 
+TESTisTRAIN = True 
 
 if TESTisTRAIN is False:
     '''This is either for the case that you have a trained SOM that you want to use to test an independent dataset (e.g. from a different volcano), or
@@ -81,7 +81,7 @@ if TESTisTRAIN is False:
     # Do you already have a trained map?
     trainedmap = False
     # If so: Where can the trained map be found?
-    trained_PATH = 'trained_maps/whakaari_3600.00wndw_rsam_10_1.00-15.00_data_features_5cl_5x5_2012-08-01_2012-08-05.pkl'
+    trained_PATH = 'OUTPUT/trained_maps/whakaari_172800.00wndw_rsam_10_2.00-5.00_data_features_5cl_5x5_2011-06-01_2012-06-01.pkl'
 
 # Plot visualised SOM structure?
 plot_SOM = True # to prevent it from showing the plots, deactivate the plt.show() function in line 171 in sompy/visualization/mapview.py as well as line 94 in sompy/visualization/umatrix.py.
@@ -98,6 +98,8 @@ interactive = False
 
 # Would you like to compute SOM errors? (default: False.This feature is only really useful when using a large set of consistent feature matrices, i.e. complete combinations of frequency bands and time window lengths)
 heatmap_on = True
+if TESTisTRAIN is False and trainedmap is True:
+     heatmap_on = False #only available when training SOMs
 
 
 
@@ -740,10 +742,14 @@ for z in range(len(mx)):
 
         else:
             if trainedmap is True:
-
+                
                 som = joblib.load(trained_PATH)
-                df,to_start,to_end,_ = load_data(file, startdate_test, enddate_test)
+
+                # preparation of test data
+                df,_,_,_ = load_data(file, startdate_test, enddate_test)
                 time_np = df[0]
+                to_start = 0 
+                to_end = len(time_np)
                 dlen = df.shape[0]
                 df.head()
                 dfselection2=pd.DataFrame(data=df.iloc[0:dlen, 1:df.shape[1]])
@@ -751,20 +757,26 @@ for z in range(len(mx)):
                     x = dfselection2.values #returns a numpy array
                     min_max_scaler = preprocessing.MinMaxScaler()
                     x_scaled = min_max_scaler.fit_transform(x)
-                    Traindata = pd.DataFrame(x_scaled).values
+                    Testdata = pd.DataFrame(x_scaled).values
                 else:
-                    Traindata = dfselection2.values
-                Traindata = dfselection2.values
+                    Testdata = dfselection2.values
+
                 EXTNAME = '_{:s}cl_{:s}x{:s}_{:s}_{:s}.pkl'.format(str(n_clusters),str(map_x),str(map_y),startdate_test,enddate_test)
+
                 # Introduce test data and plot classification result
                 if Test_and_Plot is True:
-                    test_stage(Traindata, n_clusters, time_np, to_start, to_end, FILE, EXTNAME)
+                    test_stage(Testdata, n_clusters, time_np, to_start, to_end, FILE, EXTNAME)
                     plot_data(FILE, EXTNAME, time_np, monthinterval, volcano, station, fband, n_clusters, map_x, map_y)
 
             else:
+
                 _, som = training_stage(df, n_clusters, mapsize, lattice, plot_SOM, save_trained_map, CL_Determination)
-                df,to_start,to_end,_ = load_data(file, startdate_test, enddate_test)
+
+                # preparation of test data
+                df,_,_,_ = load_data(file, startdate_test, enddate_test)
                 time_np = df[0]
+                to_start = 0 
+                to_end = len(time_np)
                 dlen = df.shape[0]
                 df.head()
                 dfselection2=pd.DataFrame(data=df.iloc[0:dlen, 1:df.shape[1]])
@@ -772,14 +784,14 @@ for z in range(len(mx)):
                     x = dfselection2.values #returns a numpy array
                     min_max_scaler = preprocessing.MinMaxScaler()
                     x_scaled = min_max_scaler.fit_transform(x)
-                    Traindata = pd.DataFrame(x_scaled).values
+                    Testdata = pd.DataFrame(x_scaled).values
                 else:
-                    Traindata = dfselection2.values
-                Traindata = dfselection2.values
+                    Testdata = dfselection2.values
+
                 EXTNAME = '_{:s}cl_{:s}x{:s}_{:s}_{:s}.pkl'.format(str(n_clusters),str(map_x),str(map_y),startdate_test,enddate_test)
                 # Introduce test data and plot classification result
                 if Test_and_Plot is True:
-                    test_stage(Traindata, n_clusters, time_np, to_start, to_end, FILE, EXTNAME)
+                    test_stage(Testdata, n_clusters, time_np, to_start, to_end, FILE, EXTNAME)
                     plot_data(FILE, EXTNAME, time_np, monthinterval, volcano, station, fband, n_clusters, map_x, map_y)
 
     if heatmap_on:
