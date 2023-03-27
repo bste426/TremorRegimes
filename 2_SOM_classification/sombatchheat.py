@@ -97,7 +97,7 @@ monthinterval = 3   #interval of x-ticks in months (adapt for visual reasons dep
 interactive = False
 
 # Would you like to compute SOM errors? (default: False.This feature is only really useful when using a large set of consistent feature matrices, i.e. complete combinations of frequency bands and time window lengths)
-heatmap_on = True
+heatmap_on = False
 if TESTisTRAIN is False and trainedmap is True:
      heatmap_on = False #only available when training SOMs
 
@@ -224,12 +224,12 @@ def test_stage(Traindata, n_clusters, time_np, to_start, to_end, FILE, EXTNAME):
     cl = som.cluster(n_clusters=n_clusters) # performs clustering
     cloutput = cl[output] #for each data, cloutput contains its assigned cluster
     cloutputDF = pd.DataFrame(cloutput)
+    to_start, to_end = int(to_start), int(to_end)
+    time_np = time_np[to_start:(to_start + to_end)]
+    cloutputDF['Time'] = np.array(time_np)
     if not os.path.isdir('OUTPUT/cluster_vectors'):
         os.makedirs('OUTPUT/cluster_vectors')
     cloutputDF.to_csv('OUTPUT/cluster_vectors/clusters_'+ FILE + EXTNAME[:-4] +'.csv', index=False, header=False)
-
-    to_start, to_end = int(to_start), int(to_end)
-    time_np = time_np[to_start:(to_start + to_end)]
 
     if not os.path.isdir('OUTPUT/tested_maps'):
         os.makedirs('OUTPUT/tested_maps')

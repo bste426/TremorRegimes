@@ -28,11 +28,11 @@ The KDE distribution over time and dominant clusters over classified time-window
 ########################
 
 # What episode would you like to analyse? (UTC)
-startdate = '2019-11-09 00:00:00'
-enddate = '2019-12-09 21:00:00'
+startdate = '2011-06-01 00:00:00'
+enddate = '2012-05-31 12:00:00'
 
 # Location of file containing dates and clusters (classified time-windows)
-cl_path = '../../SOM_Carniel/csv2som/Clusters.csv'
+cl_path = '../2_SOM_classification/OUTPUT/cluster_vectors/clusters_whakaari_043200.00wndw_rsam_10_2.00-5.00_data_features_5cl_5x5_2011-06-01_2012-06-01.csv'
 
 # Location of file containing feature
 #path_to_featurematrix = '../../SOM_Carniel/csv2som/feature_matrices/whakaari_010800.00wndw_rsam_10_2.00-5.00_data_features.csv'
@@ -60,9 +60,9 @@ plot = True
 ##############################
 
 clusters_all = pd.read_csv(cl_path,header=None)
-to_start = list(clusters_all[0]).index(startdate)
-to_end = list(clusters_all[0]).index(enddate)
-clusters_all.columns = (['time','cluster'])
+to_start = list(clusters_all[1]).index(startdate)
+to_end = list(clusters_all[1]).index(enddate)
+clusters_all.columns = (['cluster','time'])
 clusters_all = clusters_all[to_start:to_end]
 ###clusters_all in plot!!!!###
 
@@ -105,9 +105,9 @@ for B in range(len(Band_list)):
     ax3.set_ylabel('cluster density')
     ax3.text(0.95,0.95,'bandwith={:3.2f}'.format(bandwidth),ha='right',va='top',transform = ax3.transAxes)
     ax3.set_title('Cluster KDE', size=11)
-    if not os.path.isdir('plots'):
-        os.makedirs('plots')
-    plt.savefig('plots/kde_{:s}_{:s}_bw{:s}.png'.format(startdate[:10],enddate[:10],str(bandwidth)), dpi=400)
+    if not os.path.isdir('OUTPUT/KDEs'):
+        os.makedirs('OUTPUT/KDEs')
+    plt.savefig('OUTPUT/KDEs/kde_{:s}_{:s}_bw{:s}.png'.format(startdate[:10],enddate[:10],str(bandwidth)), dpi=400)
 
     ############################################
     #### FIND DOMINANT CLUSTERS FOR REGIMES ####
@@ -341,8 +341,9 @@ for B in range(len(Band_list)):
 
                         '''
         
-        final_regimes.to_csv('regimes/regimes_corr_{:s}_{:s}_bw{:s}.csv'.format(startdate[:10],enddate[:10],str(bandwidth)), index=False)
-
+        if not os.path.isdir('OUTPUT/regimes'):
+            os.makedirs('OUTPUT/regimes')
+        final_regimes.to_csv('OUTPUT/regimes/regimes_corr_{:s}_{:s}_bw{:s}.csv'.format(startdate[:10],enddate[:10],str(bandwidth)), index=False)
 
         '''
         OLD CODE:
@@ -421,14 +422,14 @@ for B in range(len(Band_list)):
 
         # add legend and title
         #ax.legend(bbox_to_anchor=(0.79, 1))
-        TITLE = str('auto_regimes')
+        TITLE = str('automatic_regimes')
         ppl.title(TITLE, loc='left')
 
         # save plot
         fig.set_size_inches(16, 9)
-        if not os.path.isdir('__OUTPUT'):
-            os.makedirs('__OUTPUT')
-        path = '__OUTPUT/auto_regimes_{:s}_{:s}_bw{:s}.png'.format(startdate[:10],enddate[:10],str(bandwidth))
+        if not os.path.isdir('OUTPUT/regime_visuals'):
+            os.makedirs('OUTPUT/regime_visuals')
+        path = 'OUTPUT/regime_visuals/regime_visuals_{:s}_{:s}_bw{:s}.png'.format(startdate[:10],enddate[:10],str(bandwidth))
         plt.savefig(path, dpi=200)
 
         plt.close()
@@ -479,9 +480,9 @@ for i in range(len(local_maxima)):
 plt.ylabel('KDE accuracy [%]')
 plt.ylim(np.min(accuracies)-10, np.max(accuracies)+10 if np.max(accuracies)+10<100 else 100)
 plt.title('KDE performance', size=15)
-path = 'regimes/regimes_accuracy_plot.png'
+path = 'OUTPUT/regimes/regimes_accuracy_plot.png'
 plt.savefig(path, dpi=400)
 accuracies = pd.DataFrame(accuracies, index=bws)
 accuracies.columns = ['KDE accuracy']
 accuracies = accuracies.rename_axis('Time')
-accuracies.to_csv('regimes/regimes_accuracy.csv')
+accuracies.to_csv('OUTPUT/regimes/regimes_accuracy.csv')
