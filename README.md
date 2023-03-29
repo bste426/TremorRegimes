@@ -3,7 +3,10 @@ This is a beta version of an algorithm designed to detect subtle changes in seis
 
 Each folder and the codes within were assigned an individual copyright licence. Please refer to the resepective folder in this repository to get information on further use and distribution.
 
-More details and updates soon! 
+Last update: March 2023
+Download of data | SOM | Regime Detection fully available. Feature analysis partly available.
+
+Development of a similar approach with more options for data pre-processing and analysis is in progress - stay tuned.
 
 Publication: 
 Steinke, B., Jolly, A. D., Carniel, R., Dempsey, D. E., & Cronin, S. J. Identification of seismo‐volcanic regimes at Whakaari/White Island (New Zealand) via systematic tuning of an unsupervised classifier. Journal of Geophysical Research: Solid Earth, e2022JB026221.

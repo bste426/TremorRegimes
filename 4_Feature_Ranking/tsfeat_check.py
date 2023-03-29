@@ -30,10 +30,10 @@ as well well as discerning regimes that are similar or distinct from each other.
 path_to_matrix = '../1_Feature_Extraction/features/whakaari_043200.00wndw_rsam_10_2.00-5.00_data_features.csv'
 
 # Provide path to cluster vector:
-cl_path = '../2_SOM_classification/OUTPUT/cluster_vectors/clusters_whakaari_043200.00wndw_rsam_10_2.00-5.00_data_features_5cl_5x5_2011-06-01_2012-06-01.csv'
+cl_path = '../2_SOM_classification/OUTPUT/cluster_vectors/clusters_whakaari_043200.00wndw_rsam_10_2.00-5.00_data_features_5cl_5x5_2011-06-01_2014-01-01.csv'
 
 # Provide path to regime list:
-path_to_regime_list = '../3_Regime_Detection/OUTPUT/regimes/regimes_corr_2011-06-01_2012-05-31_bw0.05.csv'
+path_to_regime_list = '../3_Regime_Detection/OUTPUT/regimes/regimes_nocorr_2011-06-01_2013-12-31_bw0.11.csv'
 
 
 #############################
@@ -44,19 +44,19 @@ path_to_regime_list = '../3_Regime_Detection/OUTPUT/regimes/regimes_corr_2011-06
 '''This is the main function.'''
 feat_check = True
 
+# Would you like to plot individual feature values as TS? Which one?
+'''Optional: Visualise individual features to compare with other time series, e.g. RSAM.'''
+plot_fval = True
+if plot_fval is True:
+    feature_number = [1]     # range(759) for all features
+
 # Correlation matrix?
 '''Optional: Get info on correlation between features.'''
 corrmat = False #currrently not implemented
 
-# Would you like to plot individual feature values as TS? Which one?
-'''Optional: Visualise individual features to compare with other time series, e.g. RSAM.'''
-plot_fval = False
-if plot_fval is True:
-    feature_number = range(759)     # range(759) for all features
-
 # Change start and end date of analysis:
 startdate = '2011-06-01'
-enddate = '2012-06-01'  # the first time window excluded after the set of windows of interest
+enddate = '2014-01-01'  # the first time window excluded after the set of windows of interest
 
 n_clusters = 5      # total number of clusters
 
@@ -83,16 +83,10 @@ FeatValComp = False
 feature_comparison = [195,167]   # compare these features with each other (mean and std)
 
 # Apply undersampling of data during BHT?
-undersampling = True
+undersampling = False
 
 ###################################################################################################################################################
 
-'''
-### CHECK WHETHER COLUMN CONTAINS ONLY IDENTICAL FEATURE VALUES
-def is_unique(s):
-    a = s.to_numpy()  # s.values (pandas before version 0.24)
-    return (a[0] == a).all()
-'''
 
 ###################################
 ### I N I T I A L I S A T I O N ###
@@ -137,6 +131,7 @@ if plot_fval is True:
         ppl.plot(time_np,valuedata,color='cyan',label=('FeatValue_'+str(feature_number[f])))
         ppl.xlabel('Time')
         ppl.ylabel('FeatValue')
+        ppl.xlim(min(time_np),max(time_np))
         ppl.margins(x=0)
 
         # add events to plot
@@ -159,7 +154,9 @@ if plot_fval is True:
         # FINISH #
         ppl.title('Feat_value', loc='center')
         ppl.legend()
-        ppl.savefig('RSAMs/featvalue_'+str(feature_number[f])+'.png', dpi=400)
+        if not os.path.isdir('OUTPUT/feat_plots'):
+            os.makedirs('OUTPUT/feat_plots')
+        ppl.savefig('OUTPUT/feat_plots/featvalue_'+str(feature_number[f])+'.png', dpi=400)
 
 if corrmat is True:
 
@@ -272,7 +269,7 @@ if feat_check is True:
     ### CLUSTER ADAPTION TO BINARY ###
     print('ADAPTING CLUSTER VECTOR...')
 
-    regime_list = pd.read_csv('../3_Regime_Detection/OUTPUT/regimes/regimes_corr_2011-06-01_2012-05-31_bw0.05.csv')
+    regime_list = pd.read_csv(path_to_regime_list)
 
     # make sure end date is included in regime_list
     if list(regime_list['time'])[-1]!=list(cl_vector['time'])[-1]:
@@ -336,7 +333,7 @@ if feat_check is True:
         dlen = df.shape
         matrix = pd.DataFrame(data=df.iloc[0:dlen[0], 1:dlen[1]])              # feature matrix (values only)
 
-        # need to kick out rows in matrix which are not in the cluster vector anymore
+        # need to discard rows in matrix which are not in the cluster vector anymore
         visitors = df
         orders = VCL_reg
         nonorders = visitors.loc[~visitors[0].isin(orders['Time']),].index
@@ -351,9 +348,9 @@ if feat_check is True:
 
             matrix = pd.DataFrame(data=df.iloc[0:dlen, 0:df.shape[1]])              # feature matrix
             matrix = matrix[int(to_start_reg):int(to_end_reg)]                      # focus on regime only
-            nonorders = matrix.loc[~matrix[0].isin(VCL_in['Time']),].index          # kick out all non-cluster windows
-            matrix_red = matrix.drop(labels = nonorders)                            # kicked out
-            matrix_red = pd.DataFrame(data=matrix_red.iloc[0:dlen, 1:df.shape[1]])  # kick out time vector
+            nonorders = matrix.loc[~matrix[0].isin(VCL_in['Time']),].index          # discard out all non-cluster windows
+            matrix_red = matrix.drop(labels = nonorders)                            
+            matrix_red = pd.DataFrame(data=matrix_red.iloc[0:dlen, 1:df.shape[1]])  # discard time vector
 
             # Calculates the mean value of the two key features from each group alpha to epsilon
             F1 = np.mean(matrix_red[feature_comparison[0]])
@@ -397,7 +394,7 @@ if feat_check is True:
         BHT.to_csv('OUTPUT/BHT/Regime_' + str(i + 1) + '.csv')
 
         # Append clusters of (Top X) features to list:
-        feature_rank_list['Regime {:d}'.format(i+1)] = list(BHT)[:top_X]
+        feature_rank_list['Regime {:d}'.format(i+1)] = BHT.index[:top_X]
 
         # Prepare list of Top-X features across ALL regimes (used below)
         for z in range(len(BHT.index[:top_X])):
@@ -420,12 +417,14 @@ if feat_check is True:
                 true_cols.append(string)
 
     # Convert table for Top X features for each regime to csv
+    '''This could be useful for direct comparison of top features in each regime to detect similar and different types of regimes. 
+    A more detailed way is partly implemented in 4_Feature_Ranking.'''
     ppl.close()
     ppl.close()
     ppl.close()
     if not os.path.isdir('OUTPUT/ranked_features'):
         os.makedirs('OUTPUT/ranked_features')
-    feature_rank_list.to_csv('OUTPUT/ranked_features/FRL.csv', index = None)
+    feature_rank_list.to_csv('OUTPUT/ranked_features/Top_{:s}.csv'.format(str(top_X)), index = None)
 
     # Find out what the top X feature across all regimes are and find them in dendrogram
     '''

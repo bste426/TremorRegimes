@@ -51,15 +51,15 @@ volcano = 'Whakaari'
 station = 'WIZ'
 
 # What time-period would you like to train the SOM with? (train data)
-startdate = '2011-06-01'    # min.: 2008-06-02 (2-day and 5-day matrix)
-enddate = '2012-06-01'      # max.: 2020-12-26 (last common day in 2-day and 5-day matrix)
+startdate = '2008-06-01'    # min.: 2008-06-02 (2-day and 5-day matrix)
+enddate = '2014-01-01'      # max.: 2020-12-26 (last common day in 2-day and 5-day matrix)
 
 # Folder of feature matrices (default):
 PATH = '../1_Feature_Extraction/features/'
 files = glob.glob(PATH + '*.csv')
 
 # Feature matrices should be normalised:
-normalise_matrix = True
+normalise_matrix = False
 
 
 
@@ -68,7 +68,7 @@ normalise_matrix = True
 #################################
 
 # Are training and test data sets the same? (This is to reproduce the structure of the training data itself.)
-TESTisTRAIN = True 
+TESTisTRAIN = False 
 
 if TESTisTRAIN is False:
     '''This is either for the case that you have a trained SOM that you want to use to test an independent dataset (e.g. from a different volcano), or
@@ -76,8 +76,8 @@ if TESTisTRAIN is False:
     '''
 
     # Specify time period of test data (data you want to be looking at in the end):
-    startdate_test = '2012-06-01'
-    enddate_test = '2013-12-31'
+    startdate_test = '2011-06-01'
+    enddate_test = '2014-01-01'
     # Do you already have a trained map?
     trainedmap = False
     # If so: Where can the trained map be found?

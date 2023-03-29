@@ -29,27 +29,26 @@ The KDE distribution over time and dominant clusters over classified time-window
 
 # What episode would you like to analyse? (UTC)
 startdate = '2011-06-01 00:00:00'
-enddate = '2012-05-31 12:00:00'
+enddate = '2013-12-31 12:00:00'
 
 # Location of file containing dates and clusters (classified time-windows)
-cl_path = '../2_SOM_classification/OUTPUT/cluster_vectors/clusters_whakaari_043200.00wndw_rsam_10_2.00-5.00_data_features_5cl_5x5_2011-06-01_2012-06-01.csv'
+cl_path = '../2_SOM_classification/OUTPUT/cluster_vectors/clusters_whakaari_043200.00wndw_rsam_10_2.00-5.00_data_features_5cl_5x5_2011-06-01_2014-01-01.csv'
 
 # Location of file containing feature
 #path_to_featurematrix = '../../SOM_Carniel/csv2som/feature_matrices/whakaari_010800.00wndw_rsam_10_2.00-5.00_data_features.csv'
 
 # What bandwidth would you like to apply to the KDE?
-Band_list = np.arange(0.03,0.05,0.01)
+Band_list = np.arange(0.03,0.20,0.01)
 
 # Do you want to run the KDE analysis in raw mode or apply conditions (e.g. modify dominant cluster)?
 """
 Note: If no conditional editing of KDE analysis is applied, the number of regimes containing 0 windows (of the
 automatically assigned dominant cluster) increases.
 """
-corr_duration = False           # Part I (see line 172)
-minimum_duration = 3            # minimum regime duration in days (e.g., 5 days for Whakaari in perennial time series analysis) or 'None' if no minimum_duration
+corr_duration = False            # Part I (see line 172) Check whether regimes last for at least 5 days, if not - discard or split up in neighbouring regimes
+corr_dominant_cluster = False    # Part II (see line 172) Check (and correct) if dominant cluster identified by KDE and the actual dominant cluster (most time windows in a regime) differ.
+minimum_duration = 5            # minimum regime duration in days (e.g., 5 days for Whakaari in perennial time series analysis) or 'None' if no minimum_duration
 consider_KDE_maxima = False     # If this is set to 'True', all regimes, which do not contain a local maximum of the KDE, will be discarded (split up into neighbouring regimes). 
-
-corr_dominant_cluster = True    # Part II (see line 172) Check (and correct) if dominant cluster identified by KDE and the actual dominant cluster (most time windows in a regime) differ.
 
 # Plot regimes over classification result?
 plot = True
@@ -64,12 +63,15 @@ to_start = list(clusters_all[1]).index(startdate)
 to_end = list(clusters_all[1]).index(enddate)
 clusters_all.columns = (['cluster','time'])
 clusters_all = clusters_all[to_start:to_end]
-###clusters_all in plot!!!!###
 
 time_np = clusters_all['time']  #time vector
 cl_vector = (pd.DataFrame(clusters_all['cluster'])).set_index(time_np)
 
 accuracies = [] #capture how good chosen bandwidth is (calculate accuracy of identified dominant clusters)
+
+if not os.path.isdir('OUTPUT/regimes'):
+    os.makedirs('OUTPUT/regimes')
+
 for B in range(len(Band_list)):
 
     #################################################
@@ -149,10 +151,8 @@ for B in range(len(Band_list)):
 
     if corr_duration is False and corr_dominant_cluster is False:
         final_regimes = pd.DataFrame(changes)
-        if not os.path.isdir('regimes'):
-            os.makedirs('regimes')
         final_regimes.columns = ['time','dom_cluster']
-        final_regimes.to_csv('regimes/regimes_nocorr_{:s}_{:s}_bw{:s}.csv'.format(startdate[:10],enddate[:10],str(bandwidth)), index=False)
+        final_regimes.to_csv('OUTPUT/regimes/regimes_nocorr_{:s}_{:s}_bw{:s}.csv'.format(startdate[:10],enddate[:10],str(bandwidth)), index=False)
     
     if corr_duration is True:
         ### CONDITIONAL PROCESSING STEP 1 - CHECK FOR REGIME DURATION AND LOCATION OF KDE MAXIMA ###
@@ -257,7 +257,7 @@ for B in range(len(Band_list)):
         final_regimes = pd.DataFrame(pd.concat([pd.DataFrame(final_dates), pd.DataFrame(final_clusters)], axis=1)) #combined list of regime changes
         final_regimes.columns = ['time','dom_cluster']
         if corr_dominant_cluster is False:
-            final_regimes.to_csv('regimes/regimes_corr_{:s}_{:s}_bw{:s}.csv'.format(startdate,enddate,str(bandwidth)), index=False)
+            final_regimes.to_csv('OUTPUTregimes/regimes_corr_{:s}_{:s}_bw{:s}.csv'.format(startdate,enddate,str(bandwidth)), index=False)
 
     if corr_dominant_cluster is True:
         ### CONDITIONAL PROCESSING STEP 2 - CHECK WHETHER KDE-SUGGESTED DOMINANT CLUSTER MATCHES ACTUAL DOMINANT CLUSTER ###
@@ -380,9 +380,7 @@ for B in range(len(Band_list)):
 
         mod_list = {'startdate': [datetime.strftime(x, '%Y-%m-%d') for x in startdates], 'enddates': [datetime.strftime(x, '%Y-%m-%d') for x in enddates], 'dominant clusters': clusters, 'major clusters': MJC, 'minor clusters': MNC}
         mod_list = pd.DataFrame(mod_list)
-        if not os.path.isdir('regimes'):
-            os.makedirs('regimes')
-        mod_list.to_csv('regimes/regimes_corr_{:s}_{:s}_bw{:s}.csv'.format(startdate,enddate,str(bandwidth)), header = False, index=False)
+        mod_list.to_csv('OUTPUT/regimes/regimes_corr_{:s}_{:s}_bw{:s}.csv'.format(startdate,enddate,str(bandwidth)), header = False, index=False)
         '''  
 
     ###################################################
