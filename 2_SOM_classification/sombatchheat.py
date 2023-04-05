@@ -59,7 +59,7 @@ PATH = '../1_Feature_Extraction/features/'
 files = glob.glob(PATH + '*.csv')
 
 # Feature matrices should be normalised:
-normalise_matrix = False
+normalise_matrix = True
 
 
 
@@ -81,13 +81,13 @@ if TESTisTRAIN is False:
     # Do you already have a trained map?
     trainedmap = False
     # If so: Where can the trained map be found?
-    trained_PATH = 'OUTPUT/trained_maps/whakaari_172800.00wndw_rsam_10_2.00-5.00_data_features_5cl_5x5_2011-06-01_2012-06-01.pkl'
+    trained_PATH = 'OUTPUT/trained_maps/whakaari_043200.00wndw_rsam_10_2.00-5.00_data_features_6cl_5x5_2008-06-01_2014-01-01.pkl'
 
 # Plot visualised SOM structure?
 plot_SOM = True # to prevent it from showing the plots, deactivate the plt.show() function in line 171 in sompy/visualization/mapview.py as well as line 94 in sompy/visualization/umatrix.py.
 
-# Shall the trained map be saved (or not, to save disk space)?
-save_trained_map = True
+# Shall the trained map be saved for further analysis (or not, to save disk space)?
+save_trained_map = False
 
 # Shall the maps be tested and plotted or just trained (not needed e.g. when you only want to train a SOM and then use it at 'trained_PATH' in 'TESTisTRAIN' = False )?
 Test_and_Plot = True
@@ -111,18 +111,18 @@ if TESTisTRAIN is False and trainedmap is True:
 '''
 
 #mapsize (number of neurons, for multiple SOM sizes):
-mx = [5]#,10]#,15,10,16,20,30]   #  x-dimension of SOM
-my = [5]#,10]#,15,40,25,20,30]   #  y-dimension of SOM
+mx = [5,10,15,10,16,20,30]   #  x-dimension of SOM
+my = [5,10,15,40,25,20,30]   #  y-dimension of SOM
 
 #map_lattice:
-lattice_shape = 'rect' #rectangular, otherwise 'hexa' for hexagonal. Can be adapted to individual maps, e.g. ['rect','hexa','rect','rect',...] (deactivate l 117)
+lattice_shape = 'rect' #rectangular, otherwise 'hexa' for hexagonal. Can be adapted to individual maps, e.g. ['rect','hexa','rect','rect',...] (deactivate l 119)
 map_lattice = [lattice_shape for i in range(len(mx))]
 
 #number of clusters:
 n_clusters = 5 # Initially, you can perform statistical tests to get an estimate of a suitable number of clusters (see below).
 
 # Do you want to calculate a suggested number of cluster?
-CL_Determination = True #This is implemented for batch processing when TESTisTrain = 'True'. Otherwise, use individual matrices with pre-defined n_clusters.
+CL_Determination = False #This is implemented for batch processing when TESTisTrain = 'True'. Otherwise, use individual matrices with pre-defined n_clusters.
 cl_mode = []
 # Create output from statistical tests?
 plot_curves = False
@@ -137,14 +137,19 @@ degree = 4
 #########################
 
 def load_data(file, startdate, enddate):
+
+    #load data
     df = pd.read_csv(file, header=None, low_memory=False)
-    time_np = df[0]
-    dates = list(time_np)
+    time_np = df[0] #time vector
+    
     #make sure time format is converted correctly
+    dates = list(time_np)
     if len(dates[1]) > 10:
         newdates = [x[:-9] for x in dates]
     else:
         newdates = [x for x in dates]
+
+    #find rows of given start and end dates to use only given period of matrix
     for row in newdates:
         if startdate == row:
             to_start = int(np.array(newdates.index(startdate)))
@@ -153,26 +158,25 @@ def load_data(file, startdate, enddate):
         if enddate == row:
             to_end = int(np.array(newdates.index(enddate)))
             break
-    to_end = to_end - to_start
-    df = pd.read_csv(file, header=None, skiprows=to_start, nrows=to_end,low_memory=False)
 
-    return df, to_start, to_end, time_np
-
-def training_stage(df, n_clusters, mapsize, lattice, plot_SOM, save_trained_map, CL_Determination):
-    # preparation of training data
-    dlen = df.shape[0]
+    #extract values
     df.head()
-    dfselection2=pd.DataFrame(data=df.iloc[0:dlen, 1:df.shape[1]])
-
+    dfselection2=pd.DataFrame(data=df.iloc[1:df.shape[0], 1:df.shape[1]])
     if normalise_matrix is True:
         x = dfselection2.values #returns a numpy array
         min_max_scaler = preprocessing.MinMaxScaler()
         x_scaled = min_max_scaler.fit_transform(x)
-        Traindata = pd.DataFrame(x_scaled).values
+        df = pd.DataFrame(x_scaled)[to_start:to_end].values #normalized feature values cut down to period of interest
     else:
-        Traindata = dfselection2.values
+        x_nonscaled = np.array(dfselection2.values, dtype='float')
+        df = pd.DataFrame(x_nonscaled)[to_start:to_end].values #non-normalized feature values cut down to period of interest
+    time_np = time_np[to_start:to_end].reset_index(drop=True)
 
-    Traindata = dfselection2.values
+    return df, time_np
+
+def training_stage(df, n_clusters, mapsize, lattice, plot_SOM, save_trained_map, CL_Determination):
+
+    Traindata = df
 
     # This builds the SOM using pre-defined hyperparameters and other default parameters. Initialization can be 'random' or 'pca'.
     som = sompy.SOMFactory.build(Traindata, mapsize, mask=None, mapshape='planar', lattice=lattice, normalization='var', initialization='pca', neighborhood='gaussian', training='batch', name='sompy')  
@@ -219,13 +223,13 @@ def training_stage(df, n_clusters, mapsize, lattice, plot_SOM, save_trained_map,
 
     return Traindata, som
 
-def test_stage(Traindata, n_clusters, time_np, to_start, to_end, FILE, EXTNAME):
+def test_stage(Traindata, n_clusters, time_np, FILE, EXTNAME):
     output = som.project_data(Traindata) # this is where the data (labelled 'Traindata', even though here it is the test data set) are introduced
     cl = som.cluster(n_clusters=n_clusters) # performs clustering
     cloutput = cl[output] #for each data, cloutput contains its assigned cluster
     cloutputDF = pd.DataFrame(cloutput)
-    to_start, to_end = int(to_start), int(to_end)
-    time_np = time_np[to_start:(to_start + to_end)]
+    #to_start, to_end = int(to_start), int(to_end)
+    #time_np = time_np[to_start:(to_start + to_end)]
     cloutputDF['Time'] = np.array(time_np)
     if not os.path.isdir('OUTPUT/cluster_vectors'):
         os.makedirs('OUTPUT/cluster_vectors')
@@ -729,7 +733,7 @@ for z in range(len(mx)):
         win_len.append(window)
 
         # Load dataframe from startdate to enddate
-        df,to_start,to_end,time_np = load_data(file, startdate, enddate)
+        df, time_np = load_data(file, startdate, enddate)
 
         if TESTisTRAIN is True:
             # Train a SOM on each given file in the directory
@@ -737,69 +741,46 @@ for z in range(len(mx)):
 
             # Introduce test data and plot classification result
             if Test_and_Plot is True:
-                test_stage(Traindata, n_clusters, time_np, to_start, to_end, FILE, EXTNAME)
+                test_stage(Traindata, n_clusters, time_np, FILE, EXTNAME)
                 plot_data(FILE, EXTNAME, time_np, monthinterval, volcano, station, fband, n_clusters, map_x, map_y)
 
         else:
             if trainedmap is True:
                 
+                # load trained SOM
                 som = joblib.load(trained_PATH)
 
                 # preparation of test data
-                df,_,_,_ = load_data(file, startdate_test, enddate_test)
-                time_np = df[0]
-                to_start = 0 
-                to_end = len(time_np)
-                dlen = df.shape[0]
-                df.head()
-                dfselection2=pd.DataFrame(data=df.iloc[0:dlen, 1:df.shape[1]])
-                if normalise_matrix is True:
-                    x = dfselection2.values #returns a numpy array
-                    min_max_scaler = preprocessing.MinMaxScaler()
-                    x_scaled = min_max_scaler.fit_transform(x)
-                    Testdata = pd.DataFrame(x_scaled).values
-                else:
-                    Testdata = dfselection2.values
-
-                EXTNAME = '_{:s}cl_{:s}x{:s}_{:s}_{:s}.pkl'.format(str(n_clusters),str(map_x),str(map_y),startdate_test,enddate_test)
+                Testdata, time_np = load_data(file, startdate_test, enddate_test)
 
                 # Introduce test data and plot classification result
+                EXTNAME = '_{:s}cl_{:s}x{:s}_{:s}_{:s}.pkl'.format(str(n_clusters),str(map_x),str(map_y),startdate_test,enddate_test)
                 if Test_and_Plot is True:
-                    test_stage(Testdata, n_clusters, time_np, to_start, to_end, FILE, EXTNAME)
+                    test_stage(Testdata, n_clusters, time_np, FILE, EXTNAME)
                     plot_data(FILE, EXTNAME, time_np, monthinterval, volcano, station, fband, n_clusters, map_x, map_y)
 
             else:
-
+                # train SOM on matrix
                 _, som = training_stage(df, n_clusters, mapsize, lattice, plot_SOM, save_trained_map, CL_Determination)
 
                 # preparation of test data
-                df,_,_,_ = load_data(file, startdate_test, enddate_test)
-                time_np = df[0]
-                to_start = 0 
-                to_end = len(time_np)
-                dlen = df.shape[0]
-                df.head()
-                dfselection2=pd.DataFrame(data=df.iloc[0:dlen, 1:df.shape[1]])
-                if normalise_matrix is True:
-                    x = dfselection2.values #returns a numpy array
-                    min_max_scaler = preprocessing.MinMaxScaler()
-                    x_scaled = min_max_scaler.fit_transform(x)
-                    Testdata = pd.DataFrame(x_scaled).values
-                else:
-                    Testdata = dfselection2.values
+                Testdata, time_np = load_data(file, startdate_test, enddate_test)
 
-                EXTNAME = '_{:s}cl_{:s}x{:s}_{:s}_{:s}.pkl'.format(str(n_clusters),str(map_x),str(map_y),startdate_test,enddate_test)
                 # Introduce test data and plot classification result
+                EXTNAME = '_{:s}cl_{:s}x{:s}_{:s}_{:s}.pkl'.format(str(n_clusters),str(map_x),str(map_y),startdate_test,enddate_test)
                 if Test_and_Plot is True:
-                    test_stage(Testdata, n_clusters, time_np, to_start, to_end, FILE, EXTNAME)
+                    test_stage(Testdata, n_clusters, time_np, FILE, EXTNAME)
                     plot_data(FILE, EXTNAME, time_np, monthinterval, volcano, station, fband, n_clusters, map_x, map_y)
 
     if heatmap_on:
         heatmap(Errors, n_clusters, win_len, fbands, mapsize)
 
 if CL_Determination is True:
-    # Concatenates all collected cluster numbers from statistical tests across all map sizes and matrices
-    CLM = pd.DataFrame(list(cl_mode))
-    CLM.columns = ['cluster']
-    CL_fig = sns.displot(CLM, x='cluster', color='black', discrete=True, binwidth=1, stat='density')
-    CL_fig.savefig('OUTPUT/cluster_distribution.png', dpi=300)
+    try:
+        # Concatenates all collected cluster numbers from statistical tests across all map sizes and matrices
+        CLM = pd.DataFrame(list(cl_mode))
+        CLM.columns = ['cluster']
+        CL_fig = sns.displot(CLM, x='cluster', color='black', discrete=True, binwidth=1, stat='density')
+        CL_fig.savefig('OUTPUT/cluster_distribution.png', dpi=300)
+    except:
+        print("REMINDER: Cluster determination can only be implemented when training the SOM, not when testing. Run again with 'TESTisTRAIN' = True or trainedmap = False.")
