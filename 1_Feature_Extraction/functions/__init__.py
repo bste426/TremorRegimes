@@ -1,7 +1,5 @@
-"""Top-level package for whakaari."""
-
-__author__ = """David Dempsey"""
-__email__ = 'd.dempsey@auckland.ac.nz'
+__author__ = """David Dempsey, modified by Bastian Steinke"""
+__email__ = 'bastian.steinke@auckland.ac.nz'
 __version__ = '0.1.0'
 
 # general imports
@@ -23,25 +21,27 @@ from scipy.optimize import curve_fit
 from corner import corner
 from functools import partial
 from fnmatch import fnmatch
+import itertools
 
 # ObsPy imports
-try:
-    from obspy.clients.fdsn import Client as FDSNClient 
-    from obspy import UTCDateTime, read_inventory 
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore')
-        from obspy.signal.filter import bandpass
-    from obspy.io.mseed import ObsPyMSEEDFilesizeTooSmallError
-    from obspy.clients.fdsn.header import FDSNNoDataException
-    failedobspyimport = False
-except:
-    failedobspyimport = True
+#try:
+from obspy.clients.fdsn import Client as FDSNClient 
+from obspy import UTCDateTime, read_inventory 
+with warnings.catch_warnings():
+    warnings.simplefilter('ignore')
+    from obspy.signal.filter import bandpass
+from obspy.io.mseed import ObsPyMSEEDFilesizeTooSmallError
+from obspy.clients.fdsn.header import FDSNNoDataException
+#failedobspyimport = False
+#except:
+#    failedobspyimport = True
 
 # feature recognition imports
 from tsfresh import extract_features, select_features
 from tsfresh.utilities.dataframe_functions import impute
 from tsfresh.transformers import FeatureSelector
-from tsfresh.feature_extraction.settings import ComprehensiveFCParameters
+from tsfresh.feature_extraction.settings import ComprehensiveFCParameters, FirstFCParameters, SecondFCParameters
+from tsfresh.feature_selection.relevance import calculate_relevance_table
 from imblearn.under_sampling import RandomUnderSampler
 
 # classifier imports
@@ -87,11 +87,11 @@ class TremorData(object):
         plot
             Plot tremor data.
     """
-    def __init__(self, volcano, data_streams, frequency='10T'):
+    def __init__(self, volcano, station, frequency, data_streams,file_format):
         self.volcano = volcano
         self.frequency = frequency
-        self.dir = os.sep.join(getfile(currentframe()).split(os.sep)[:-2]+['RSAM'])
-        self._assess(data_streams)
+        self.dir = os.sep.join(getfile(currentframe()).split(os.sep)[:-2]+['RSAM/{:s}/{:s}'.format(volcano, station)])
+        self._assess(data_streams,file_format)
     def __repr__(self):
         if self.exists:
             tm = [self.ti.year, self.ti.month, self.ti.day, self.ti.hour, self.ti.minute]
@@ -99,53 +99,45 @@ class TremorData(object):
             return 'TremorData:{:d}/{:02d}/{:02d} {:02d}:{:02d} to {:d}/{:02d}/{:02d} {:02d}:{:02d}'.format(*tm)
         else:
             return 'no data'
-    def _assess(self, data_streams):
+    def _assess(self, data_streams,file_format):
         """ Load existing file and check date range of data.
         """
         # error checking
         if not os.path.isdir(self.dir):
             raise ValueError('no directory for volcano \'{:s}\''.format(self.dir))
-        fl = '{:s}/eruptive_periods.txt'.format(self.dir)
-        if not os.path.isfile(fl):
-            raise ValueError('no eruption data file \'{:s}\''.format(fl))
-        fl = '{:s}/*.csv'.format(self.dir)
+        #fl = '{:s}/eruptive_periods.txt'.format(self.dir)
+        #if not os.path.isfile(fl):
+        #    raise ValueError('no eruption data file \'{:s}\''.format(fl))
+        fl = '{:s}/*.{:s}'.format(self.dir, file_format)
         data_fls = glob(fl)
         if len(data_fls) == 0:
             raise ValueError('no data files \'{:s}\''.format(fl))
         # get eruptions
-        with open('{:s}/eruptive_periods.txt'.format(self.dir),'r') as fp:
-            self.tes = [datetimeify(ln.rstrip()) for ln in fp.readlines()]
+        #with open('{:s}/eruptive_periods.txt'.format(self.dir),'r') as fp:
+        #    self.tes = [datetimeify(ln.rstrip()) for ln in fp.readlines()]
         # check if data file exists
-        self._load_data(data_streams)
-    def _load_data(self,data_streams):
-        data_streams = str(data_streams)
+        self._load_data(data_streams,file_format)
+    def _load_data(self,data_streams,file_format):
+        #data_streams = str(data_streams)
         #fl = '/Users/bst/Documents/All/PhD/Data/Codes/Dempsey_new/data/whakaari/rsam_600_0.01-0.50_data.csv'
-        test = '{:s}/'+data_streams[2:-2]+'.csv'
-        fl = test.format(self.dir)
-        data_fls = glob(fl)
+        dir = '{:s}/{:s}.{:s}'
+        fl = dir.format(self.dir, data_streams,file_format)
+        if file_format == 'csv':
+            d = pd.read_csv(fl)
+            fmt = detect_timeformat(d[d.columns[0]][0])
+            self.df = d.set_index([d.columns[0]], drop = True).rename_axis('Time')
+            self.df.index = [datetimeify(date, fmt) for date in d[d.columns[0]]]
+            self.ti = np.min(self.df.index)
+            self.tf = np.max(self.df.index)
+        elif file_format == 'parquet':
+            d = pd.read_parquet(fl)
+            fmt = detect_timeformat(str(d.index[0]))
+            self.df = d.rename_axis('Time')
+            self.ti = np.min(self.df.index)
+            self.tf = np.max(self.df.index)
+        else:
+            print('Unrecognized format of RSAM file (should be csv or parquet).')
 
-        # read data files
-        ds = []
-        dtypes = []
-        for fl in data_fls:
-            dtypes.append(fl.split(os.sep)[-1].split('.csv')[0])
-            _, d = np.genfromtxt(fl, skip_header=0, delimiter=',').T
-            with open(fl,'r') as fp: t = [ln.split(',')[0] for ln in fp.readlines()[0:]]
-            fmt = detect_timeformat(t[0])
-            t = [datetimeify(ti, fmt) for ti in t]
-            ds.append(pd.Series(d, t))
-        # find latest tmin, earliest tmax
-        self.ti = np.max([d.index[0] for d in ds])
-        self.tf = np.min([d.index[-1] for d in ds])
-        # truncate records to time range and resample at regular interval
-        ds2 = []
-        for d in ds:
-            d = d.loc[~d.index.duplicated(keep='last')]
-            d = d[(d.index>=self.ti)&(d.index<=self.tf)]
-            d = d.resample(self.frequency).interpolate('linear')
-            ds2.append(d)
-        
-        self.df = pd.DataFrame(dict(zip(dtypes,ds2)), index = ds2[-1].index)
     def _compute_transforms(self):
         """ Compute data transforms.
 
@@ -158,7 +150,7 @@ class TremorData(object):
         """
         return
         for col in self.df.columns:
-            if col is 'time': continue
+            if col == 'time': continue
             # inverse
             if 'inv_'+col not in self.df.columns:
                 self.df['inv_'+col] = 1./self.df[col]
@@ -402,17 +394,17 @@ class ForecastModel(object):
         plot_feature_correlation
             Corner plot of feature correlation.
     """
-    def __init__(self, volcano, window, overlap, look_forward, ti=None, tf=None, data_streams=['rsam','mf','hf','dsar'], root=None, savefile_type='csv'):
+    def __init__(self, volcano, station, frequency, window, overlap, look_forward, ti=None, tf=None, data_streams = '', freq_bands=['rsam','mf','hf','dsar'], file_format = 'csv', root=None, savefile_type='csv'):
         self.volcano = volcano
         self.window = window
         self.overlap = overlap
         self.look_forward = look_forward
         self.data_streams = data_streams
-        self.data = TremorData(self.volcano,data_streams)
-        if any(['_' in ds for ds in data_streams]):
+        self.data = TremorData(self.volcano,station,frequency,data_streams,file_format)
+        if any(['_' in ds for ds in freq_bands]):
             self.data._compute_transforms()
-        if any([d not in self.data.df.columns for d in self.data_streams]):
-            print(self.data.df.columns,self.data_streams)
+        if any([d not in self.data.df.columns for d in freq_bands]):
+            print(self.data.df.columns,freq_bands)
             raise ValueError("data restricted to any of {}".format(self.data.df.columns))
         if ti is None: ti = self.data.ti
         if tf is None: tf = self.data.tf
@@ -450,7 +442,7 @@ class ForecastModel(object):
         # naming convention and file system attributes
         self.savefile_type = savefile_type
         if root is None:
-            self.root = '{:s}_{:3.2f}wndw'.format(self.volcano, self.window)
+            self.root = '{:s}_{:s}_{:3.2f}'.format(self.volcano, station, self.window)
             self.root += '_'+((('{:s}-')*len(self.data_streams))[:-1]).format(*sorted(self.data_streams))
         else:
             self.root = root
@@ -458,7 +450,7 @@ class ForecastModel(object):
         self.plotdir = r'{:s}/plots/{:s}'.format(self.rootdir, self.root)
         self.modeldir = r'{:s}/models/{:s}'.format(self.rootdir, self.root)
         self.featdir = r'{:s}/features'.format(self.rootdir, self.root)
-        self.featfile = r'{:s}/{:s}_features.{:s}'.format(self.featdir, self.root, self.savefile_type)
+        self.featfile = r'{:s}/{:s}/{:s}/{:s}_features.{:s}'.format(self.featdir, volcano, station, self.root, self.savefile_type)
         self.preddir = r'{:s}/predictions/{:s}'.format(self.rootdir, self.root)
     # private helper methods
     def _detect_model(self):
@@ -480,7 +472,7 @@ class ForecastModel(object):
                 self.classifier = classifier
                 return
         raise ValueError("did not recognise models in '{:s}'".format(self._use_model))
-    def _construct_windows(self, Nw, ti, i0=0, i1=None):
+    def _construct_windows(self, Nw, ti, freqband, i0=0, i1=None):
         """ Create overlapping data windows for feature extraction.
 
             Parameters:
@@ -505,21 +497,41 @@ class ForecastModel(object):
             i1 = Nw
 
         # get data for windowing period
-        df = self.data.get_data(ti-self.dtw, ti+(Nw-1)*self.dto)[self.data_streams]
+        df = self.data.get_data(ti-self.dtw, ti+(Nw-1)*self.dto)[freqband]
 
         # create windows
+        #dfs = pd.DataFrame()
         dfs = []
+        dfi_id = []
+        dfi_index = []
+        print('Constructing windows...')
         for i in range(i0, i1):
+            # Changed back to lists for faster processing
+            #dfi = pd.DataFrame(df[:].iloc[i*(self.iw-self.io):i*(self.iw-self.io)+self.iw])
             dfi = df[:].iloc[i*(self.iw-self.io):i*(self.iw-self.io)+self.iw]
             try:
-                dfi['id'] = pd.Series(np.ones(self.iw, dtype=int)*i, index=dfi.index)
+                #dfi['id'] = pd.DataFrame(np.ones(self.iw, dtype=int)*i, index=dfi.index)
+                dfi_id.append(list(np.ones(self.iw, dtype=int)*i))
+                dfi_index.append(list(dfi.index))
             except ValueError:
                 print('this shouldn\'t be happening')
-            dfs.append(dfi)
-        df = pd.concat(dfs)
+            dfs.append(list(dfi))
+            #dfs = dfs.append(dfi)
+        #df = pd.concat(dfs)
+        dfi_index_list = list(itertools.chain.from_iterable(dfi_index))
+        dfs_list = list(itertools.chain.from_iterable(dfs))
+        dfi_id_list = list(itertools.chain.from_iterable(dfi_id))
+
+        new_df = pd.DataFrame(dfs_list, index = dfi_index_list)
+        new_df.columns = ([freqband])
+        new_df['id'] = dfi_id_list
+        df = new_df
+        
+        #df = dfs
         window_dates = [ti + i*self.dto for i in range(Nw)]
+
         return df, window_dates[i0:i1]
-    def _extract_features(self, ti, tf):
+    def _extract_features(self, ti, tf, freq_bands):
         """ Extract features from windowed data.
 
             Parameters:
@@ -546,7 +558,9 @@ class ForecastModel(object):
         Nw = int(np.floor(((tf-ti)/self.dt)/(self.iw-self.io)))+1
 
         # features to compute
-        cfp = ComprehensiveFCParameters()
+        #cfp = MinimalFCParameters()
+        cfp = SecondFCParameters()
+        #self.compute_only_features = ['change_quantiles']#,'sample_entropy','maximum','minimum','c3','autocorrelation', 'agg_autocorrelation', 'partial_autocorrelation','number_peaks','binned_entropy','approximate_entropy','linear_trend', 'agg_linear_trend','ar_coefficient']
         if self.compute_only_features:
             cfp = dict([(k, cfp[k]) for k in cfp.keys() if k in self.compute_only_features])
         else:
@@ -620,15 +634,22 @@ class ForecastModel(object):
         else:
             # create feature matrix from scratch  
             '''
-        df, wd = self._construct_windows(Nw, ti)
-        fm = extract_features(df, column_id='id', n_jobs=self.n_jobs, default_fc_parameters=cfp, impute_function=impute)
-        fm.index = pd.Series(wd)
-        fm.index.name = 'time'
+        matrix = pd.DataFrame()
+        for freqband in freq_bands:
+            print('Now processing ', freqband)
+            df, wd = self._construct_windows(Nw, ti, freqband)
+            fm = extract_features(df, column_id='id', n_jobs=self.n_jobs, default_fc_parameters=cfp, impute_function=impute)
+            #fm.index = pd.Series(wd)
+            #fm.index.name = 'time'
+            for c in fm.columns:
+                matrix[c] = fm[c]
+        matrix.index = pd.Series(wd)
+        matrix.index.name = 'time'
         # fm.to_csv(self.featfile, index=True, index_label='time')
-        save_dataframe(fm, self.featfile, index=True, index_label='time')
+        #save_dataframe(fm, self.featfile, index=True, index_label='time')
         
-        ys = pd.DataFrame(self._get_label(fm.index.values), columns=['label'], index=fm.index)
-        return fm, ys
+        #ys = pd.DataFrame(self._get_label(fm.index.values), columns=['label'], index=fm.index)
+        return matrix
     def _get_label(self, ts):
         """ Compute label vector.
 
@@ -693,11 +714,9 @@ class ForecastModel(object):
             ti = self.data.ti + self.dtw
         ts.insert(0,ti)
         ts.append(tf)
-
         for t0,t1 in zip(ts[:-1], ts[1:]):
             print('feature extraction {:s} to {:s}'.format(t0.strftime('%Y-%m-%d'), t1.strftime('%Y-%m-%d')))
             fM,ys = self._extract_features(ti,t1)
-
         self.ti_prev = ti
         self.tf_prev = tf
         self.fM = fM
