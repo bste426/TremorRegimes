@@ -1,4 +1,7 @@
 # Tremor Regimes
+
++++ EDIT: Python update and associated adaptions to packages implemented, but not yet modified on github, which may impact functionality. July 2024. Repo needs to be updated to account for second publication. +++
+
 This is a beta version of an algorithm designed to detect subtle changes in seismicity in volcanic environments. It is subject to modifications and may thus not work as intended on every OS.
 
 Each folder and the codes within were assigned an individual copyright licence. Please refer to the resepective folder in this repository to get information on further use and distribution.
