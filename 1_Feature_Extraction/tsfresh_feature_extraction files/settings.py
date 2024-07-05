@@ -303,9 +303,9 @@ class FirstFCParameters(PickableSettings):
             "c3": [{"lag": lag} for lag in range(1, 4)],
             "cid_ce": [{"normalize": True}, {"normalize": False}],
             "quantile": [{"q": q} for q in [.1, .2, .3, .4, .6, .7, .8, .9]],
-            "autocorrelation": [{"lag": lag} for lag in [10,12,20,50,100,200,500]],
-            "agg_autocorrelation": [{"f_agg": s, "maxlag": 500} for s in ["mean", "median", "var", "argmax"]],
-            "partial_autocorrelation": [{"lag": lag} for lag in [2,3,4,5,6,7,8,9,10]],
+            "autocorrelation": [{"lag": lag} for lag in [10]],
+            "agg_autocorrelation": [{"f_agg": s, "maxlag": 499} for s in ["mean", "median", "var", "argmax"]],
+            "partial_autocorrelation": [{"lag": lag} for lag in [3,4,5]],
             "single_ACF_lag_stats": [{"attr": ["lag_max", "val_max", "lag_min", "val_min"]}],
             "number_cwt_peaks": [{"n": n} for n in [1, 5]],
             "number_peaks": [{"n": n} for n in [2, 5, 10, 20]],
@@ -318,11 +318,11 @@ class FirstFCParameters(PickableSettings):
             "central_freqs": [{"coeff": coeff} for coeff in ["dom_freq", "top2_freq", "top3_freq", "top4_freq", "top5_freq", "mean_peaks", "std_peaks", "var_peaks", "n_peaks", "dom_freq_power", "top2_freq_power", "top3_freq_power", "top4_freq_power", "top5_freq_power", "mean_peaks_power", "std_peaks_power", "var_peaks_power"]],
             "dsar": [{"band": [[1,2],[2,5]]}, {"band": [[2,5],[4.5,8]]}, {"band": [[4.5,8],[8,16]]}],
             "change_quantiles": [{"ql": ql, "qh": qh, "isabs": b, "f_agg": f}
-                                          for ql in [0., .2, .4, .6, .8] for qh in [.2, .4, .6, .8, 1.]
-                                          for b in [True] for f in ["mean", "var"] if ql < qh],
+                                          for ql in [.2] for qh in [1.]
+                                          for b in [True] for f in ["mean"] if ql < qh],
             "fft_aggregated": [{"aggtype": s} for s in ["centroid", "variance", "skew", "kurtosis"]],
             "approximate_entropy": [{"m": 5, "r": r} for r in [.1, .3, .5, .7, .9]],
-            "friedrich_coefficients": (lambda m: [{"coeff": coeff, "m": m, "r": 30} for coeff in range(m + 1)])(3),
+            "friedrich_coefficients": (lambda m: [{"coeff": coeff, "m": m, "r": 30} for coeff in [0]])(3),
             "max_langevin_fixed_point": [{"m": 3, "r": 30}],
             "linear_trend": [{"attr": "pvalue"}, {"attr": "rvalue"}, {"attr": "intercept"},
                              {"attr": "slope"}, {"attr": "stderr"}],
@@ -333,6 +333,7 @@ class FirstFCParameters(PickableSettings):
             "augmented_dickey_fuller": [{"attr": "teststat"}, {"attr": "pvalue"}, {"attr": "usedlag"}],
             "energy_ratio_by_chunks": [{"num_segments" : 10, "segment_focus": i} for i in range(10)],
             "ratio_beyond_r_sigma": [{"r": x} for x in [0.5, 1, 1.5, 2, 2.5, 3, 5, 6, 7, 10]],
+            "mfcc": [{"coeff": coeff} for coeff in range(5)],
         })
 
         super().__init__(name_to_param)
@@ -359,14 +360,14 @@ class SecondFCParameters(PickableSettings):
             "cid_ce": [{"normalize": True}, {"normalize": False}],
             "quantile": [{"q": q} for q in [.1, .2, .3, .4, .6, .7, .8, .9]],
             "autocorrelation": [{"lag": lag} for lag in [1,2,3,4,5,6,7,8,9,10,11,12]],
-            "agg_autocorrelation": [{"f_agg": s, "maxlag": 180} for s in ["mean", "median", "var", "argmax"]],
+            "agg_autocorrelation": [{"f_agg": s, "maxlag": 179} for s in ["mean", "median", "var", "argmax"]],
             "partial_autocorrelation": [{"lag": lag} for lag in [2,3,4,5,6,7,8,9,10]],
             "single_ACF_lag_stats": [{"attr": ["lag_max", "val_max", "lag_min", "val_min"]}],
             "multi_ACF_lag_stats": [{"attr": attr, "chunk_no": c_k} for attr, c_k in product(["lag_max", "acf_val"], range(6))],
             "number_peaks": [{"n": n} for n in [1, 2, 6, 60]],
             "binned_entropy": [{"max_bins": max_bins} for max_bins in [10]],
             "index_mass_quantile": [{"q": q} for q in [.1, .2, .3, .4, .6, .7, .8, .9]],
-            "ar_coefficient": [{"coeff": coeff, "k": k} for coeff in [1, 2, 3, 4, 5] for k in [6,30,60,120,179]],
+            "ar_coefficient": [{"coeff": coeff, "k": k} for coeff in [5] for k in [60]],
             "change_quantiles": [{"ql": ql, "qh": qh, "isabs": b, "f_agg": f}
                                           for ql in [0., .2, .4, .6, .8] for qh in [.2, .4, .6, .8, 1.]
                                           for b in [True] for f in ["mean", "var"] if ql < qh],
@@ -380,7 +381,7 @@ class SecondFCParameters(PickableSettings):
                                  for i in [6, 60, 359]
                                  for f in ["mean", "std"]],
             "augmented_dickey_fuller": [{"attr": "teststat"}, {"attr": "pvalue"}, {"attr": "usedlag"}],
-            "energy_ratio_by_chunks": [{"num_segments" : 10, "segment_focus": i} for i in range(10)],
+            "energy_ratio_by_chunks": [{"num_segments" : 10, "segment_focus": i} for i in [1, 6]],
             "ratio_beyond_r_sigma": [{"r": x} for x in [0.5, 1, 1.5, 2, 2.5, 3, 5, 6, 7, 10]],
         })
 

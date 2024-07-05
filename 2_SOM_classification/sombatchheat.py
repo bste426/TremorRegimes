@@ -1,6 +1,8 @@
 #pip install git+https://github.com/sevamoo/SOMPY.git#egg=SOMPY
 
 import matplotlib.pylab as plt
+import matplotlib.pyplot as ppl
+import matplotlib
 import glob
 import sompy as sompy
 import pandas as pd
@@ -30,6 +32,8 @@ from sklearn.cluster import KMeans
 from itertools import combinations
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import silhouette_score, davies_bouldin_score, v_measure_score
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
 
 # to avoid warnings:
 register_matplotlib_converters()  
@@ -47,16 +51,16 @@ SOM will reconstruct the input data structure in reduced dimensionality, before 
 #####################################
 
 #Name of volcano, station:
-volcano = 'Whakaari'
-station = 'WIZ'
+volcano = 'Copahue'
+station = 'COP'
 
 # What time-period would you like to train the SOM with? (train data)
-startdate = '2008-06-01'    # min.: 2008-06-02 (2-day and 5-day matrix)
-enddate = '2014-01-01'      # max.: 2020-12-26 (last common day in 2-day and 5-day matrix)
+startdate = '2020-01-01'    # min.: 2008-06-02 (2-day and 5-day matrix)
+enddate = '2020-12-31'      # max.: 2020-12-26 (last common day in 2-day and 5-day matrix)
 
 # Folder of feature matrices (default):
-PATH = '../1_Feature_Extraction/features/'
-files = glob.glob(PATH + '*.csv')
+PATH = '../1_Feature_Extraction/features/{:s}/{:s}/'.format(volcano, station)
+files = glob.glob(PATH + '*')
 
 # Feature matrices should be normalised:
 normalise_matrix = True
@@ -68,7 +72,7 @@ normalise_matrix = True
 #################################
 
 # Are training and test data sets the same? (This is to reproduce the structure of the training data itself.)
-TESTisTRAIN = False 
+TESTisTRAIN = True 
 
 if TESTisTRAIN is False:
     '''This is either for the case that you have a trained SOM that you want to use to test an independent dataset (e.g. from a different volcano), or
@@ -76,25 +80,25 @@ if TESTisTRAIN is False:
     '''
 
     # Specify time period of test data (data you want to be looking at in the end):
-    startdate_test = '2011-06-01'
-    enddate_test = '2014-01-01'
+    startdate_test = '2012-06-01'
+    enddate_test = '2013-06-01'
     # Do you already have a trained map?
     trainedmap = False
     # If so: Where can the trained map be found?
     trained_PATH = 'OUTPUT/trained_maps/whakaari_043200.00wndw_rsam_10_2.00-5.00_data_features_6cl_5x5_2008-06-01_2014-01-01.pkl'
-
+ 
 # Plot visualised SOM structure?
-plot_SOM = True # to prevent it from showing the plots, deactivate the plt.show() function in line 171 in sompy/visualization/mapview.py as well as line 94 in sompy/visualization/umatrix.py.
+plot_SOM = False # to prevent it from showing the plots, deactivate the plt.show() function in line 171 in sompy/visualization/mapview.py as well as line 94 in sompy/visualization/umatrix.py.
 
 # Shall the trained map be saved for further analysis (or not, to save disk space)?
 save_trained_map = False
 
 # Shall the maps be tested and plotted or just trained (not needed e.g. when you only want to train a SOM and then use it at 'trained_PATH' in 'TESTisTRAIN' = False )?
 Test_and_Plot = True
-monthinterval = 3   #interval of x-ticks in months (adapt for visual reasons depending on test length)
+monthinterval = 1   #interval of x-ticks in months (adapt for visual reasons depending on test length)
 
 # Shall the maps be interactive for close-ups? (shows immediately, turn off for batch)
-interactive = False
+interactive = True
 
 # Would you like to compute SOM errors? (default: False.This feature is only really useful when using a large set of consistent feature matrices, i.e. complete combinations of frequency bands and time window lengths)
 heatmap_on = False
@@ -111,12 +115,12 @@ if TESTisTRAIN is False and trainedmap is True:
 '''
 
 #mapsize (number of neurons, for multiple SOM sizes):
-mx = [5,10,15,10,16,20,30]   #  x-dimension of SOM
-my = [5,10,15,40,25,20,30]   #  y-dimension of SOM
+mx = [24]#,10,15,10,16,20,30]   #  x-dimension of SOM
+my = [16]#,10,15,40,25,20,30]   #  y-dimension of SOM
 
 #map_lattice:
-lattice_shape = 'rect' #rectangular, otherwise 'hexa' for hexagonal. Can be adapted to individual maps, e.g. ['rect','hexa','rect','rect',...] (deactivate l 119)
-map_lattice = [lattice_shape for i in range(len(mx))]
+lattice_shape = 'hexa'  #   rectangular, otherwise 'hexa' for hexagonal.
+map_lattice = [lattice_shape for i in range(len(mx))]   # Can be adapted to individual maps, e.g. ['rect','hexa','rect','rect',...] 
 
 #number of clusters:
 n_clusters = 5 # Initially, you can perform statistical tests to get an estimate of a suitable number of clusters (see below).
@@ -139,11 +143,23 @@ degree = 4
 def load_data(file, startdate, enddate):
 
     #load data
-    df = pd.read_csv(file, header=None, low_memory=False)
-    time_np = df[0] #time vector
-    
+    try:
+        df = pd.read_csv(file, header=None, low_memory=False)
+        time_np = df[0] #time vector
+        dates = list(time_np)
+    except:
+        # write time vector from parquet
+        df = pd.read_parquet(file)
+        dates = [datetime.strftime(x, '%Y-%m-%d %H:%M:%S') for x in df.index]
+        dates.insert(0, 'time')
+        time_np = pd.Series(dates)
+        # prepare matrix from parquet
+        df = df.reset_index()
+        columns = df.columns
+        df.columns = range(df.columns.size)
+        df = pd.concat([pd.DataFrame(columns).T,df.loc[:]])
+
     #make sure time format is converted correctly
-    dates = list(time_np)
     if len(dates[1]) > 10:
         newdates = [x[:-9] for x in dates]
     else:
@@ -160,17 +176,51 @@ def load_data(file, startdate, enddate):
             break
 
     #extract values
-    df.head()
-    dfselection2=pd.DataFrame(data=df.iloc[1:df.shape[0], 1:df.shape[1]])
+    dfselection2=pd.DataFrame(data=df.iloc[1:df.shape[0], 1:df.shape[1]])[to_start:to_end]
     if normalise_matrix is True:
         x = dfselection2.values #returns a numpy array
         min_max_scaler = preprocessing.MinMaxScaler()
         x_scaled = min_max_scaler.fit_transform(x)
-        df = pd.DataFrame(x_scaled)[to_start:to_end].values #normalized feature values cut down to period of interest
+        time_np = time_np[to_start:to_end].reset_index(drop=True)
+        df = pd.DataFrame(x_scaled).dropna(axis=1)
+        time_np = time_np.drop(df[df[0]>0.01].index)
+        df = df.drop(df[df[0]>0.01].index).values
+        #filter 0.01 [pd.DataFrame(x_scaled)[0][i] for i in range(pd.DataFrame(x_scaled)[0].shape[0]) if pd.DataFrame(x_scaled)[0][i]<0.01]
+        #df = pd.DataFrame(x_scaled).values #normalized feature values cut down to period of interest
+        #test = [pd.DataFrame(x_scaled)[i] for i in range(x_scaled.shape[1]) if pd.DataFrame(x_scaled)[i].isnull().values.any()==False] 
     else:
         x_nonscaled = np.array(dfselection2.values, dtype='float')
-        df = pd.DataFrame(x_nonscaled)[to_start:to_end].values #non-normalized feature values cut down to period of interest
-    time_np = time_np[to_start:to_end].reset_index(drop=True)
+        df = pd.DataFrame(x_nonscaled).values #non-normalized feature values cut down to period of interest
+        time_np = time_np[to_start:to_end].reset_index(drop=True)
+
+    '''
+    # Some nice additional plots:
+    pca = PCA(n_components=2)
+    scaler = preprocessing.StandardScaler().fit(df)
+    data_sta = scaler.transform(df)
+    YM = pca.fit_transform(data_sta)
+    tsn = TSNE(n_components=2, init='random', perplexity=759).fit_transform(data_sta)
+    fin = pd.DataFrame(tsn).set_index(time_np)
+    plt.scatter(fin[fin.columns[0]],fin[fin.columns[1]], alpha = 0.35)
+    YM = pd.DataFrame(YM).set_index(time_np)#.values for SOM 
+    plt.scatter(YM[YM.columns[0]],YM[YM.columns[1]], c = 'darkblue', alpha = 0.35)
+    for i in range(YM.shape[0]):
+        plt.text(YM.iloc[i][0], YM.iloc[i][1], YM.index[i])
+    
+    RSAM = pd.read_parquet('/Users/bste426/Documents/All/PhD/Data/Codes/TremorRegimes/1_Feature_Extraction/RSAM/Augustine/AUW/rsam_Augustine_AUW_10_filtered.parquet')
+    plt.plot(RSAM[3100000:4000000], alpha = 0.75)
+    plt.legend(RSAM.columns)
+    plt.axvspan('2006-01-11 00:00:00', '2006-01-28 00:00:00', alpha=0.25, color='red', label='EX')
+    plt.axvspan('2006-01-28 00:00:00', '2006-02-10 00:00:00', alpha=0.25, color='blue', label='CONT')
+    plt.axvspan('2006-03-03 00:00:00', '2006-03-16 00:00:00', alpha=0.25, color='yellow', label='EFF')
+    plt.ylim(0, 10000)
+    legend1 = plt.legend()
+    plt.legend(RSAM.columns, loc = 'upper left')
+    ppl.gca().add_artist(legend1)
+    
+    for i in range(8):
+        plt.plot(df[df.columns[8+i]])
+    '''
 
     return df, time_np
 
@@ -192,18 +242,13 @@ def training_stage(df, n_clusters, mapsize, lattice, plot_SOM, save_trained_map,
     if plot_SOM is True:
         if not os.path.isdir('OUTPUT/insideSOM'):
             os.makedirs('OUTPUT/insideSOM')
-
-        v = sompy.mapview.View2DPacked(10, 10, 'test', text_size=1)
-        v.show(som, what='cluster')
-        plt.savefig('OUTPUT/insideSOM/mapview_'+ FILE + EXTNAME[:-4] + '.png', dpi=200)
-        plt.close()
-
-        h = sompy.hitmap.HitMapView(10, 10, 'hitmap', text_size=8, show_text=True)
+   
+        h = sompy.hitmap.HitMapView(30, 30, 'hitmap', text_size=8, show_text=True)
         h.show(som)
         plt.savefig('OUTPUT/insideSOM/hitmap_'+ FILE + EXTNAME[:-4] + '.png', dpi=200)
         plt.close()
 
-        u = sompy.umatrix.UMatrixView(50, 50, 'umatrix', show_axis=True, text_size=8, show_text=True)
+        u = sompy.umatrix.UMatrixView(30, 50, 'umatrix', show_axis=True, text_size=8, show_text=True)
         u.show(som, distance2=1, row_normalized=False, show_data=True, contooor=True, blob=False)
         plt.savefig('OUTPUT/insideSOM/uMatrix_'+ FILE + EXTNAME[:-4] + '.png', dpi=200)
         plt.close()
@@ -267,7 +312,7 @@ def plot_data(FILE, EXTNAME, time_np, monthinterval, volcano, station, fband, n_
     tminimo = 0
     tmassimo = time_np.shape[0]
     colours = cloutput[tminimo:tmassimo] % colormap.shape[0]
-    ax.scatter(time_np[tminimo:tmassimo], cloutput[tminimo:tmassimo]+1, c=colormap[colours])
+    ax.scatter(time_np[tminimo:tmassimo], cloutput[tminimo:tmassimo]+1, s = 10, c=colormap[colours], alpha = 0.75)
     ax.set_xlim(min(time_np), max(time_np))
     ax.set_ylabel('Cluster number', fontsize = 12)
     ax.grid(linestyle='dotted', which='both')
@@ -283,13 +328,15 @@ def plot_data(FILE, EXTNAME, time_np, monthinterval, volcano, station, fband, n_
     plt.yticks(fontsize = 12)
 
     # add events to plot
-    with open('../1_Feature_Extraction/RSAM/eruptive_periods.txt', 'r') as fp:
+    #'''
+    with open('volcanic_activity_log/{:s}/eruptive_periods.txt'.format(volcano), 'r') as fp:
         tes = [ln.rstrip() for ln in fp.readlines()]
     xcoords = tes
     for xc in xcoords:
         ax.axvline(x = xc, color='k', linestyle='-', linewidth=2, label='_')
     
-    with open('../1_Feature_Extraction/RSAM/activity.txt', 'r') as fp:
+    '''
+    with open('volcanic_activity_log/{:s}/activity.txt'.format(volcano), 'r') as fp:
         act = [ln.rstrip() for ln in fp.readlines()]
     cords = act
     for co in cords:
@@ -298,7 +345,7 @@ def plot_data(FILE, EXTNAME, time_np, monthinterval, volcano, station, fband, n_
     ax.axvline(x='2012-08-04 16:52:00', color='k', linestyle='-', linewidth=2, label='eruption')
     ax.axvline(x='2012-09-02 00:00:00', color='dimgrey', linestyle='--', linewidth=2, label='ash emission')
     ax.axvline(x='2012-11-24 00:00:00', color='dimgrey', linestyle=':', linewidth=2, label='observation of lava dome')
-
+    '''
 
     # add legend and title
     ax.legend(bbox_to_anchor=(1.005, 1.075), loc='upper right', fontsize = 9, ncol = 3)
@@ -314,7 +361,7 @@ def plot_data(FILE, EXTNAME, time_np, monthinterval, volcano, station, fband, n_
     plt.savefig(path, dpi=600)
 
     if interactive is True:
-        fig.set_size_inches(15,8)
+        fig.set_size_inches(16,6)
         ppl.ion()
         ppl.show()
         ppl.pause(1000)
@@ -719,14 +766,14 @@ for z in range(len(mx)):
         print(file) # provide info on where the analysis is at
         Graphics = False  # False disables graphics, e.g. for batch
         logging.getLogger('matplotlib.font_manager').disabled = True
-        plt.interactive(False)
+        #plt.interactive(False)
 
         # Prepare name and path to save SOM
         FILE = file[len(PATH):-4]  # removes ".csv"
         EXTNAME = '_{:s}cl_{:s}x{:s}_{:s}_{:s}.pkl'.format(str(n_clusters),str(map_x),str(map_y),startdate,enddate) # save classification result under this name
         mapname = FILE+EXTNAME[:-4] # full path to save classification result
 
-        # extract frequency band from filename (easier naming convention would make this easier; implemented in future)
+        # extract frequency band from filename (better naming convention would make this easier; implemented in future)
         fband = file[([index for index, character in enumerate(file) if character == '_'][-3]+1):([index for index, character in enumerate(file) if character == '_'][-2])]
         fbands.append(fband)
         window = file[([index for index, character in enumerate(file) if character == '_'][2]+1):([index for index, character in enumerate(file) if character == '_'][3]-4)]

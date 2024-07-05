@@ -16,6 +16,8 @@ import pyarrow.parquet as pq
 from sklearn.decomposition import PCA
 from sklearn import preprocessing
 from scipy.signal import decimate
+from scipy.signal import detrend
+from obspy.signal.detrend import polynomial
 import itertools
 
 from sklearn.exceptions import FitFailedWarning
@@ -65,8 +67,8 @@ PCA_features = False        #!!!For some reason only works when time window leng
 if from_raw is False:
     #Time period for downloading data
     '''Note that missing dates will be interpolated.'''
-    startdate = datetime(2018,8,1,0,0,0)
-    enddate = datetime(2018,8,3,0,0,0)
+    startdate = datetime(2022,1,14,0,0,0)
+    enddate = datetime(2022,1,16,0,0,0)
 
     #Depending on file size, might need to be reduced by decimation factor.
     decimation_factor = None
@@ -75,15 +77,15 @@ if from_raw is False:
     intervals = ([10])#1, 5, 10, 60, 120, 300, 600])
 
     ### Choose frequency bands
-    fbands = [[2,5]]
+    fbands = [[1,2], [2,5], [4.5,8], [8,16]]
 
     #Specify time window length in seconds
-    windows = ([3600])#,10800,21600,43200,86400,172800])
+    windows = ([43000])#,10800,21600,43200,86400,172800])
 
     # Here you can choose if time windows should overlap or not. If so, specify overlap rate.
     overlap = False
     if overlap is True:
-        overlap_rate = ((3600*48-600)/(3600*48))    # can be expressed in relative (e.g. 0.75 for 75%) or in absolute quantities (e.g. [(3000/3600)] for 1 hour windows every 10 minutes (5/6 overlap))
+        overlap_rate = (5/6)    # can be expressed in relative (e.g. 0.75 for 75%) or in absolute quantities (e.g. [(3000/3600)] for 1 hour windows every 10 minutes (5/6 overlap))
     else:
         overlap_rate = 0
         
@@ -105,19 +107,19 @@ if from_raw is True:
     '''
 
     # Raw data are usually 100-200Hz. To reduce file size and memory, you can reduce the data load by a factor of...
-    decimation_factor = 2
+    decimation_factor = None
 
     # Would you like to filter the raw data? Filter: Butterworth Bandpass Filter
-    fbands = [[0.1,25]]
+    fbands = [[1,25]]
 
     FE_settings={
     'Stage_I':{
         'len_ov':[10,0],
-        'FE':[FirstFCParameters(),['maximum','minimum'], None]
+        'FE':[FirstFCParameters(),['friedrich_coefficients','autocorrelation', 'partial_autocorrelation', 'kurtosis', 'change_quantiles'], None]
         },
     'Stage_II':{
         'len_ov':[3600,3000],
-        'FE':[SecondFCParameters(),['maximum','minimum'], None],
+        'FE':[SecondFCParameters(),['variance_coefficient','max_langevin_fixed_point','energy_ratio_by_chunks','ar_coefficient', 'pk_pk_distance'], None],
         },
     'Stage_III':{
         'len_ov':[(3600*12),(3600*11)],
@@ -128,7 +130,16 @@ if from_raw is True:
 skip3rd = True
 
 STATIONS={
-    'WIZ':{
+    'RIZ':{
+        'volcano':'Whakaari',
+        'frequency':100,
+        'client_name':'GEONET',
+        'nrt_name':'https://service-nrt.geonet.org.nz',
+        'location':'10',
+        'channel':'HHZ',
+        'network':'NZ'
+        },
+    'WSRZ':{
         'volcano':'Whakaari',
         'frequency':100,
         'client_name':"GEONET",
@@ -275,6 +286,15 @@ STATIONS={
         'channel':'HHZ',
         'network':'NZ'
         },
+    'DRZ':{
+        'volcano':'Ruapehu',
+        'frequency':100,
+        'client_name':"GEONET",
+        'nrt_name':'https://service-nrt.geonet.org.nz',
+        'location':'10',
+        'channel':'HHZ',
+        'network':'NZ'
+        },
     'FWVZ':{
         'volcano':'Ruapehu',
         'frequency':100,
@@ -341,7 +361,7 @@ def get_gdata_day(t0,i):
         return    
 
     client = FDSNClient(client_name)
-    nrt_client = FDSNClient(nrt_name)
+    #nrt_client = FDSNClient(nrt_name)
     
     # download data
     try:
@@ -361,7 +381,6 @@ def get_gdata_day(t0,i):
 
     try:
         data = client.get_waveforms(network ,station, location, channel, t0, t0+daysec)
-
         # if less than 1 day of data, try different client
         if len(data.traces[0].data) < 60*100:
             raise FDSNNoDataException('')
@@ -645,25 +664,63 @@ def FE_from_raw(input_data, raw_windows, raw_overlap, SR, Nw, first_window, time
 
     single_stream, wd = construct_windows(time, Nw, SR, first_window, raw_windows, raw_overlap)
 
-    for feature in input_data.columns:
-        #data = list(input_data['{:s}'.format(feature)])[:(Nw-1)*((raw_windows-raw_overlap)*SR)+raw_windows*SR]
-        new_df = copy(single_stream)
-        if raw_overlap == 0:
-            data = list(input_data['{:s}'.format(feature)])[:int((Nw-1)*((raw_windows-raw_overlap)*SR)+raw_windows*SR)]
-            new_df.insert(loc=0, column='{:s}'.format(feature), value=data)
-        else:
-            overlapping_data = []
-            overlapping_data.append([list(input_data['{:s}'.format(feature)])[int(i*((raw_windows-raw_overlap)*SR)):int(i*((raw_windows-raw_overlap)*SR)+raw_windows*SR)] for i in range(Nw)])
-            data = list(itertools.chain.from_iterable(list(itertools.chain.from_iterable(overlapping_data)))) 
-            new_df.insert(loc=0, column='{:s}'.format(feature), value=data)
-        new_df.columns = [sub.replace('__', '_') for sub in new_df.columns]
-        feature = feature.replace("__", "_" ) #tsfresh doesn't like '__' ... looks like its face when you still do it.
-        matrix = extract_features(new_df, column_id='id', n_jobs=6, default_fc_parameters=cfp, impute_function=impute)
-        
+    if stage == 'Stage_I':
+        for feature in input_data.columns:
+            #data = list(input_data['{:s}'.format(feature)])[:(Nw-1)*((raw_windows-raw_overlap)*SR)+raw_windows*SR]
+            new_df = copy(single_stream)
+            if raw_overlap == 0:
+                data = list(input_data['{:s}'.format(feature)])[:int((Nw-1)*((raw_windows-raw_overlap)*SR)+raw_windows*SR)]
+                new_df.insert(loc=0, column='{:s}'.format(feature), value=data)
+            else:
+                overlapping_data = []
+                overlapping_data.append([list(input_data['{:s}'.format(feature)])[int(i*((raw_windows-raw_overlap)*SR)):int(i*((raw_windows-raw_overlap)*SR)+raw_windows*SR)] for i in range(Nw)])
+                data = list(itertools.chain.from_iterable(list(itertools.chain.from_iterable(overlapping_data)))) 
+                new_df.insert(loc=0, column='{:s}'.format(feature), value=data)
+            new_df.columns = [sub.replace('__', '_') for sub in new_df.columns]
+            feature = feature.replace("__", "_" ) #tsfresh doesn't like '__' ... looks like its face if you still do it.
+            matrix = extract_features(new_df, column_id='id', n_jobs=6, default_fc_parameters=cfp, impute_function=impute)
+
+            # z-score Normalisation of each column in matrix
+            '''
+            for column in list(matrix.columns):
+                matrix[column] = ((matrix[column]-matrix[column].mean())/matrix[column].std()).values
+                if matrix[column].isnull().values.any(): matrix[column] = matrix[column].fillna(0)
+            '''
+            matrix.index = pd.Series(wd)
+            matrix.index.name = 'time'
+            return matrix
+    else:
+        collect_matrices = pd.DataFrame()
+        for feature in input_data.columns:
+            #data = list(input_data['{:s}'.format(feature)])[:(Nw-1)*((raw_windows-raw_overlap)*SR)+raw_windows*SR]
+            new_df = copy(single_stream)
+            if raw_overlap == 0:
+                data = list(input_data['{:s}'.format(feature)])[:int((Nw-1)*((raw_windows-raw_overlap)*SR)+raw_windows*SR)]
+                new_df.insert(loc=0, column='{:s}'.format(feature), value=data)
+            else:
+                overlapping_data = []
+                overlapping_data.append([list(input_data['{:s}'.format(feature)])[int(i*((raw_windows-raw_overlap)*SR)):int(i*((raw_windows-raw_overlap)*SR)+raw_windows*SR)] for i in range(Nw)])
+                data = list(itertools.chain.from_iterable(list(itertools.chain.from_iterable(overlapping_data)))) 
+                new_df.insert(loc=0, column='{:s}'.format(feature), value=data)
+            new_df.columns = [sub.replace('__', '_') for sub in new_df.columns]
+            feature = feature.replace("__", "_" ) #tsfresh doesn't like '__' ... looks like its face if you still do it.
+            matrix = extract_features(new_df, column_id='id', n_jobs=6, default_fc_parameters=cfp, impute_function=impute)
+
+            # z-score Normalisation of each column in matrix
+            '''
+            for column in list(matrix.columns):
+                matrix[column] = ((matrix[column]-matrix[column].mean())/matrix[column].std()).values
+                if matrix[column].isnull().values.any(): matrix[column] = matrix[column].fillna(0)
+            '''
+            #matrix.index = pd.Series(wd)
+            #matrix.index.name = 'time'
+            collect_matrices = pd.concat([collect_matrices, matrix], axis = 1)
+        return collect_matrices
+        '''
         #SAVE FILES
         if stage == 'Stage_I':
-            if not os.path.isdir('RSAM/{:s}/{:s}/Stage_I'.format(volcano, station)):
-                os.makedirs('RSAM/{:s}/{:s}/Stage_I'.format(volcano, station), exist_ok = True)
+            if not os.path.isdir('features/{:s}/{:s}/Stage_I'.format(volcano, station)):
+                os.makedirs('features/{:s}/{:s}/Stage_I'.format(volcano, station), exist_ok = True)
             matrix.index = pd.Series(wd)
             matrix.index.name = 'time'
 
@@ -682,9 +739,9 @@ def FE_from_raw(input_data, raw_windows, raw_overlap, SR, Nw, first_window, time
             return matrix
         
         else:
-            OUT = 'RSAM/{:s}/{:s}/Stage_II/Stage2_{:s}s_{:s}_{:s}'.format(volcano, station, str(raw_windows), str('NO') if raw_overlap==0 else str(raw_overlap),feature)
-            if not os.path.isdir('RSAM/{:s}/{:s}/Stage_II'.format(volcano, station)):
-                os.makedirs('RSAM/{:s}/{:s}/Stage_II'.format(volcano, station), exist_ok = True)
+            OUT = 'features/{:s}/{:s}/Stage_II/Stage2_{:s}s_{:s}_{:s}'.format(volcano, station, str(raw_windows), str('NO') if raw_overlap==0 else str(raw_overlap),feature)
+            if not os.path.isdir('features/{:s}/{:s}/Stage_II'.format(volcano, station)):
+                os.makedirs('features/{:s}/{:s}/Stage_II'.format(volcano, station), exist_ok = True)
             matrix.index = pd.Series(wd)
             matrix.index.name = 'time'
 
@@ -699,7 +756,8 @@ def FE_from_raw(input_data, raw_windows, raw_overlap, SR, Nw, first_window, time
 
             if file_format == 'csv':
                 matrix.to_csv('{:s}.csv'.format(OUT), index=True, header=True)
-        
+        '''
+
 def prep_settings(stage):
 
     raw_windows             = int(FE_settings[stage]['len_ov'][0])
@@ -725,38 +783,25 @@ def prep_other_settings(Ov0,Win1,Ov1,Win2,Ov2,input,stage):
 
     return SR, first_window, Nw, time
 
-def extract_signature_features(stage):
-    
-    class_I = pd.read_csv('matrix FE I')
-    selected_fts = extract_signature_features(matrix)
-    selected_fts.to_csv('RSAM/selected_feats.csv', index=True, header=True)
-    p_test = calculate_relevance_table(data)
-
-    return p_test
-    #load data
-    '''
-    folder = glob('RSAM/Stage_II/*')
-    for file in folder:
-        data_matrix = pd.read_csv(file)
-        correlation_matrix = data_matrix.corr().abs()
-        correlation_matrix = pd.DataFrame(correlation_matrix)
-    '''
-
 def raw(volcano = volcano, station = station, FE_settings = FE_settings, file_format = 'hdf5', SR = frequency, skip3rd = True, fband = fbands, decimation_factor = None):  
     
     folder = glob('../SeismicData/{:s}/{:s}/*'.format(volcano,station))
 
-    if not os.path.isdir('RSAM'):
-        os.makedirs('RSAM', exist_ok=True)
+    if not os.path.isdir('features'):
+        os.makedirs('features', exist_ok=True)
 
-    all_raw = []    # complete (pre-processed) seismic signal for data available
-    all_time = []   # complete time vector for the entire signal
+    #all_raw = []    # complete (pre-processed) seismic signal for data available
+    #all_time = []   # complete time vector for the entire signal
 
     ###########################
     ### PRE-PROCESSING DATA ###
     ###########################
 
+    master_matrix = pd.DataFrame()
+
     for file in sorted(folder):
+        all_raw = [] 
+        all_time = []
         print(file)
         # Read file and load velocity data, sampling rate (SR) and starttime (ST)
         try:
@@ -795,43 +840,83 @@ def raw(volcano = volcano, station = station, FE_settings = FE_settings, file_fo
         [all_time.append(x) for x in time]
         if all_time.count(ST.round('D')) == 2: all_time.pop(all_time.index(ST.round('D'))), all_raw.pop(all_time.index(ST.round('D')))
 
-    all_time = all_time[:720001]
-    all_raw = all_raw[:720001]
+        # detrend and demean data
+        #all_raw = polynomial(np.array(all_raw), order = 8, plot = False)
+        #all_raw = list(detrend(all_raw, type = 'constant'))
+
+        #all_raw = all_raw[:480000]
+        #all_time = all_time[:480000]
+
+        ######################################
+        ### FIRST FEATURE EXTRACTION STAGE ###
+        ######################################
+
+        raw_windows_I, raw_overlap_I, cfp, compute_only_features, drop_features = prep_settings('Stage_I')
+
+        Nw_I = int(np.floor(len(all_time)/((raw_windows_I-raw_overlap_I)*SR)))-int(raw_overlap_I/(raw_windows_I-raw_overlap_I))
+
+        matrix = FE_from_raw(all_raw, raw_windows_I, raw_overlap_I, SR, Nw_I, all_time[0], all_time, cfp, compute_only_features, drop_features, 
+                            'features/{:s}/{:s}/Stage_I/Stage1_{:s}s_{:s}'.format(volcano, station, str(raw_windows_I), str('NO') if raw_overlap_I==0 else str(raw_overlap_I)), file_format, stage = 'Stage_I')
+
+        #######################################
+        ### SECOND FEATURE EXTRACTION STAGE ###
+        #######################################
+
+        raw_windows_II, raw_overlap_II, cfp, compute_only_features, drop_features = prep_settings('Stage_II')
+
+        SR_II, first_window, Nw_II, time = prep_other_settings(None, raw_windows_I, raw_overlap_I, raw_windows_II, raw_overlap_II, matrix, '2')
+
+        matrix_II = FE_from_raw(matrix, raw_windows_II, raw_overlap_II, SR_II, Nw_II, first_window, time, cfp, compute_only_features, drop_features, None, file_format, stage = 'Stage_II')
+
+        master_matrix = master_matrix._append(matrix_II)
+
+        ######################################
+        ### THIRD FEATURE EXTRACTION STAGE ###
+        ######################################
+
+        if skip3rd is not True:
+
+            raw_windows_III, raw_overlap_III, cfp, compute_only_features, drop_features = prep_settings('Stage_III')
+
+            SR_III, first_window, Nw_III, time = prep_other_settings(raw_overlap_I, raw_windows_II, raw_overlap_II, raw_windows_III, raw_overlap_III, matrix_II, '3')
+
+            FE_from_raw(matrix_II, raw_windows_III, raw_overlap_III, SR_III, Nw_III, first_window, time, cfp, compute_only_features, drop_features, 'features/Stage3_{:s}h_{:s}'.format(str(int(raw_windows_III/3600)), str('NO') if raw_overlap_III==0 else str(int(raw_overlap_III/3600))), file_format, stage = 'Stage_III')
+
+    master_matrix.reset_index(inplace=True)
+    master_matrix.drop(columns = 'index', inplace = True)
+    table = pa.Table.from_pandas(master_matrix)
+    pq.write_table(table, '/Users/bst/Documents/All/PhD/Data/Codes/TremorRegimes/1_Feature_Extraction/features/Whakaari/WIZ/master_matrix_2012_13.parquet')
 
 
-    ######################################
-    ### FIRST FEATURE EXTRACTION STAGE ###
-    ######################################
+def extract_signature_features():
+    
+    save_in_new_matrix = [] # This is the list of features that made it through the significance & FDR tests.
+    folder = glob.glob('features/{:s}/{:s}/Stage_II'.format(volcano, station))
+    #folder = glob.glob('features/{:s}/{:s}/Stage_II'.format(volcano, station))
+    for file in folder:
+        # Load data & prep DataFrame
+        off     = pd.read_csv('/Users/bste426/Desktop/WIZ off/Stage_II/Stage2_3600s_3000_raw_abs_energy.csv')
+        on      = pd.read_csv('/Users/bste426/Desktop/WIZ on/Stage_II/Stage2_3600s_3000_raw_abs_energy.csv')
+        all     = pd.concat([on,off])
+        all     = all.set_index(all['time']).drop(columns = ['time'])
 
-    raw_windows_I, raw_overlap_I, cfp, compute_only_features, drop_features = prep_settings('Stage_I')
+        # Add labels (for p_test)
+        labels_on   = ([[1]*len(on)])
+        labels_off  = ([[0]*len(off)])
+        all_labels  = (labels_off+labels_on)[0]+(labels_off+labels_on)[1]
+        all_labels  = pd.Series(all_labels, index = all.index)
 
-    Nw_I = int(np.floor(len(all_time)/((raw_windows_I-raw_overlap_I)*SR)))-int(raw_overlap_I/(raw_windows_I-raw_overlap_I))
+        # Significance ranking & save significant features
+        p_test_results = calculate_relevance_table(all, all_labels, ml_task = 'classification', n_jobs = 6)
+        extracted_columns = [all[x] for x in p_test_results['relevant'] == True] # extract features labelled as 'True' (i.e., significant)
+        save_in_new_matrix.append(extracted_columns)
 
-    matrix = FE_from_raw(all_raw, raw_windows_I, raw_overlap_I, SR, Nw_I, all_time[0], all_time, cfp, compute_only_features, drop_features, 
-                         'RSAM/{:s}/{:s}/Stage_I/Stage1_{:s}s_{:s}'.format(volcano, station, str(raw_windows_I), str('NO') if raw_overlap_I==0 else str(raw_overlap_I)), file_format, stage = 'Stage_I')
 
-    #######################################
-    ### SECOND FEATURE EXTRACTION STAGE ###
-    #######################################
-
-    raw_windows_II, raw_overlap_II, cfp, compute_only_features, drop_features = prep_settings('Stage_II')
-
-    SR_II, first_window, Nw_II, time = prep_other_settings(None, raw_windows_I, raw_overlap_I, raw_windows_II, raw_overlap_II, matrix, '2')
-
-    matrix_II = FE_from_raw(matrix, raw_windows_II, raw_overlap_II, SR_II, Nw_II, first_window, time, cfp, compute_only_features, drop_features, None, file_format, stage = 'Stage_II')
-
-    ######################################
-    ### THIRD FEATURE EXTRACTION STAGE ###
-    ######################################
-
-    if skip3rd is not True:
-
-        raw_windows_III, raw_overlap_III, cfp, compute_only_features, drop_features = prep_settings('Stage_III')
-
-        SR_III, first_window, Nw_III, time = prep_other_settings(raw_overlap_I, raw_windows_II, raw_overlap_II, raw_windows_III, raw_overlap_III, matrix_II, '3')
-
-        FE_from_raw(matrix_II, raw_windows_III, raw_overlap_III, SR_III, Nw_III, first_window, time, cfp, compute_only_features, drop_features, 'RSAM/Stage3_{:s}h_{:s}'.format(str(int(raw_windows_III/3600)), str('NO') if raw_overlap_III==0 else str(int(raw_overlap_III/3600))), file_format, stage = 'Stage_III')
-
+        folder = glob('features/Stage_II/*')
+        for file in folder:
+            data_matrix = pd.read_csv(file)
+            correlation_matrix = data_matrix.corr().abs()
+            correlation_matrix = pd.DataFrame(correlation_matrix)
 
 # This is for analysing tremor pulses at WIZ in 2019.
 
@@ -891,10 +976,8 @@ if __name__ == "__main__":
         if volcano == 'Colima':
             pass
         else:
-            try:
-                pull_geonet_data(ncpus=6)
-            except:
-                pass
+            pull_geonet_data(ncpus=6)
+
 
     if RSAM is True:
         #CREATE RAW MATRICES WITH DIFFERENT FREQUENCIES AND INTERVALS
@@ -922,7 +1005,7 @@ if __name__ == "__main__":
 
     if from_raw is True:
         raw(volcano, station, FE_settings, file_format, frequency, skip3rd, fbands, decimation_factor)
-        extract_signature_features('FE_I')
+        #extract_signature_features()
 
     if tremor_drops_WIZ is True:
         tremor_drops()

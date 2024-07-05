@@ -24,24 +24,23 @@ from fnmatch import fnmatch
 import itertools
 
 # ObsPy imports
-#try:
-from obspy.clients.fdsn import Client as FDSNClient 
-from obspy import UTCDateTime, read_inventory 
-with warnings.catch_warnings():
-    warnings.simplefilter('ignore')
-    from obspy.signal.filter import bandpass
-from obspy.io.mseed import ObsPyMSEEDFilesizeTooSmallError
-from obspy.clients.fdsn.header import FDSNNoDataException
-#failedobspyimport = False
-#except:
-#    failedobspyimport = True
+try:
+    from obspy.clients.fdsn import Client as FDSNClient 
+    from obspy import UTCDateTime, read_inventory 
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        from obspy.signal.filter import bandpass
+    from obspy.io.mseed import ObsPyMSEEDFilesizeTooSmallError
+    from obspy.clients.fdsn.header import FDSNNoDataException
+    failedobspyimport = False
+except:
+    failedobspyimport = True
 
 # feature recognition imports
 from tsfresh import extract_features, select_features
 from tsfresh.utilities.dataframe_functions import impute
 from tsfresh.transformers import FeatureSelector
-from tsfresh.feature_extraction.settings import ComprehensiveFCParameters, FirstFCParameters, SecondFCParameters
-from tsfresh.feature_selection.relevance import calculate_relevance_table
+from tsfresh.feature_extraction.settings import ComprehensiveFCParameters, MinimalFCParameters, EfficientFCParameters, FirstFCParameters, SecondFCParameters
 from imblearn.under_sampling import RandomUnderSampler
 
 # classifier imports
@@ -560,7 +559,8 @@ class ForecastModel(object):
         # features to compute
         #cfp = MinimalFCParameters()
         cfp = SecondFCParameters()
-        #self.compute_only_features = ['change_quantiles']#,'sample_entropy','maximum','minimum','c3','autocorrelation', 'agg_autocorrelation', 'partial_autocorrelation','number_peaks','binned_entropy','approximate_entropy','linear_trend', 'agg_linear_trend','ar_coefficient']
+        self.compute_only_features = None #,'sample_entropy','maximum','minimum','c3','autocorrelation', 'agg_autocorrelation', 'partial_autocorrelation','number_peaks','binned_entropy','approximate_entropy','linear_trend', 'agg_linear_trend','ar_coefficient']
+        self.drop_features = ['permutation_entropy','multi_ACF_lag_stats','central_freqs','dsar']
         if self.compute_only_features:
             cfp = dict([(k, cfp[k]) for k in cfp.keys() if k in self.compute_only_features])
         else:

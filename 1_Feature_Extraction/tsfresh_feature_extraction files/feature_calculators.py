@@ -34,7 +34,9 @@ from scipy.stats import linregress, rankdata
 from statsmodels.tools.sm_exceptions import MissingDataError
 from statsmodels.tsa.ar_model import AutoReg as AR
 from statsmodels.tsa.stattools import acf, adfuller, pacf
-
+from tsfel.feature_extraction.features_utils import *
+from tsfel.feature_extraction.calc_features import *
+from tsfel.feature_extraction.features_settings import *
 
 try:
     import matrixprofile as mp
@@ -2189,3 +2191,266 @@ def energy_ratio_by_chunks(x, param):
         res_index.append("num_segments_{}__segment_focus_{}".format(num_segments, segment_focus))
 
     return list(zip(res_index, res_data)) # Materialize as list for Python 3 compatibility with name handling
+
+
+@set_property("fctype", "simple")
+@set_property("not_in_second", True)
+def spectral_distance(x):
+    """Computes the signal spectral distance.
+
+    Distance of the signal's cumulative sum of the FFT elements to
+    the respective linear regression.
+
+    Feature computational cost: 1
+
+    Parameters
+    ----------
+    signal : nd-array
+        Signal from which spectral distance is computed
+    fs : float
+        Sampling frequency
+
+    Returns
+    -------
+    float
+        spectral distance
+
+    """
+    fs = len(x)/10
+    fmag = np.abs(np.fft.rfft(x))
+    f = np.fft.rfftfreq(len(x), d=1/fs)
+    cum_fmag = np.cumsum(fmag)
+    # Computing the linear regression
+    points_y = np.linspace(0, cum_fmag[-1], len(cum_fmag))
+
+    return np.sum(points_y - cum_fmag)
+
+
+@set_property("fctype", "simple")
+@set_property("not_in_second", True)
+def spectral_decrease(x):
+    """Represents the amount of decreasing of the spectra amplitude.
+
+    Description and formula in Article:
+    The Timbre Toolbox: Extracting audio descriptors from musicalsignals
+    Authors Peeters G., Giordano B., Misdariis P., McAdams S.
+
+    Feature computational cost: 1
+
+    Parameters
+    ----------
+    signal : nd-array
+        Signal from which spectral decrease is computed
+    fs : float
+        Sampling frequency
+
+    Returns
+    -------
+    float
+        Spectral decrease
+
+    """
+    fs = len(x)/10
+    f, fmag = calc_fft(x, fs)
+
+    fmag_band = fmag[1:]
+    len_fmag_band = np.arange(2, len(fmag) + 1)
+
+    # Sum of numerator
+    soma_num = np.sum((fmag_band - fmag[0]) / (len_fmag_band - 1), axis=0)
+
+    if not np.sum(fmag_band):
+        return 0
+    else:
+        # Sum of denominator
+        soma_den = 1 / np.sum(fmag_band)
+
+        # Spectral decrease computing
+        return soma_den * soma_num
+
+
+@set_property("fctype", "simple")
+@set_property("not_in_second", True)
+def spectral_spread(x):
+    """Measures the spread of the spectrum around its mean value.
+
+    Description and formula in Article:
+    The Timbre Toolbox: Extracting audio descriptors from musicalsignals
+    Authors Peeters G., Giordano B., Misdariis P., McAdams S.
+
+    Feature computational cost: 2
+
+    Parameters
+    ----------
+    signal : nd-array
+        Signal from which spectral spread is computed.
+    fs : float
+        Sampling frequency
+
+    Returns
+    -------
+    float
+        Spectral Spread
+
+    """
+    fs = len(x)/10
+    f, fmag = calc_fft(x, fs)
+    if not np.sum(fmag):
+        spect_centroid = 0
+    else:
+        spect_centroid = np.dot(f, fmag / np.sum(fmag))
+
+    if not np.sum(fmag):
+        return 0
+    else:
+        return np.dot(((f - spect_centroid) ** 2), (fmag / np.sum(fmag))) ** 0.5
+
+
+@set_property("fctype", "simple")
+@set_property("not_in_second", True)
+def spectral_positive_turning(x):
+    """Computes number of positive turning points of the fft magnitude signal.
+
+    Feature computational cost: 1
+
+    Parameters
+    ----------
+    signal : nd-array
+        Input from which the number of positive turning points of the fft magnitude are computed
+    fs : float
+        Sampling frequency
+
+    Returns
+    -------
+    float
+        Number of positive turning points
+
+    """
+    fs = len(x)/10
+    f, fmag = calc_fft(x, fs)
+    diff_sig = np.diff(fmag)
+
+    array_signal = np.arange(len(diff_sig[:-1]))
+
+    positive_turning_pts = np.where((diff_sig[array_signal + 1] < 0) & (diff_sig[array_signal] > 0))[0]
+
+    return len(positive_turning_pts)
+
+
+@set_property("fctype", "simple")
+@set_property("not_in_second", True)
+def spectral_entropy(x):
+    """Computes the spectral entropy of the signal based on Fourier transform.
+
+    Feature computational cost: 1
+
+    Parameters
+    ----------
+    signal : nd-array
+        Input from which spectral entropy is computed
+    fs : float
+        Sampling frequency
+
+    Returns
+    -------
+    float
+        The normalized spectral entropy value
+
+    """
+    # Removing DC component
+    fs = len(x)/10
+
+    sig = x - np.mean(x)
+
+    f, fmag = calc_fft(sig, fs)
+
+    power = fmag ** 2
+
+    if power.sum() == 0:
+        return 0.0
+
+    prob = np.divide(power, power.sum())
+
+    prob = prob[prob != 0]
+
+    # If probability all in one value, there is no entropy
+    if prob.size == 1:
+        return 0.0
+
+    return -np.multiply(prob, np.log2(prob)).sum() / np.log2(prob.size)
+
+
+@set_property("fctype", "combiner")
+@set_property("not_in_second", True)
+def mfcc(x, param):
+    """Computes the MEL cepstral coefficients.
+
+    It provides the information about the power in each frequency band.
+
+    Implementation details and description on:
+    https://www.kaggle.com/ilyamich/mfcc-implementation-and-tutorial
+    https://haythamfayek.com/2016/04/21/speech-processing-for-machine-learning.html#fnref:1
+
+    Feature computational cost: 1
+
+    Parameters
+    ----------
+    signal : nd-array
+        Input from which MEL coefficients is computed
+    fs : float
+        Sampling frequency
+    pre_emphasis : float
+        Pre-emphasis coefficient for pre-emphasis filter application
+    nfft : int
+        Number of points of fft
+    nfilt : int
+        Number of filters
+    num_ceps: int
+        Number of cepstral coefficients
+    cep_lifter: int
+        Filter length
+
+    Returns
+    -------
+    nd-array
+        MEL cepstral coefficients
+
+    """
+    fs = len(x)/10 #if overlapping window is 10 seconds
+
+    filter_banks = filterbank(x, fs, 0.97, 512, 40)
+
+    mel_coeff = scipy.fft.dct(filter_banks, type=2, axis=0, norm="ortho")[1 : (5 + 1)]  # Keep 2-13
+
+    mel_coeff -= np.mean(mel_coeff, axis=0) + 1e-8
+
+    # liftering
+    ncoeff = len(mel_coeff)
+    n = np.arange(ncoeff)
+    lift = 1 + (22 / 2) * np.sin(np.pi * n / 22)  # cep_lifter = 22 from python_speech_features library
+
+    mel_coeff *= lift
+
+    return [("coeff_{}".format(config['coeff']), mel_coeff[config['coeff']]) for config in param]
+
+
+@set_property("fctype", "simple")
+@set_property("not_in_first", True)
+def pk_pk_distance(x):
+    """Computes the peak to peak distance.
+
+    Feature computational cost: 1
+
+    Parameters
+    ----------
+    signal : nd-array
+        Input from which peak to peak is computed
+
+    Returns
+    -------
+    float
+        peak to peak distance
+
+    """
+    return np.abs(np.max(x) - np.min(x))
+
